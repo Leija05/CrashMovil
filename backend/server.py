@@ -174,7 +174,7 @@ async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
         genai.configure(api_key=api_key)
         
         # Seleccionar el modelo
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('models/gemini-2.5-flash')
         
         # 2. Preparación de variables
         severity = classify_severity(data.g_force)
