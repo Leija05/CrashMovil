@@ -1,0 +1,164 @@
+import { create } from 'zustand';
+
+export interface EmergencyContact {
+  id: string;
+  name: string;
+  phone: string;
+  relationship: string;
+  is_primary: boolean;
+}
+
+export interface ImpactEvent {
+  id: string;
+  timestamp: string;
+  g_force: number;
+  acceleration_x: number;
+  acceleration_y: number;
+  acceleration_z: number;
+  gyro_x: number;
+  gyro_y: number;
+  gyro_z: number;
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  latitude?: number;
+  longitude?: number;
+  was_false_alarm: boolean;
+  ai_diagnosis?: string;
+}
+
+export interface DeviceSettings {
+  id: string;
+  device_name: string;
+  impact_threshold: number;
+  countdown_seconds: number;
+  auto_call_enabled: boolean;
+  sms_enabled: boolean;
+  message_type: 'sms' | 'whatsapp';
+  language: 'es' | 'en';
+  theme: 'dark' | 'light';
+}
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  blood_type?: string;
+  allergies?: string;
+  medical_conditions?: string;
+  emergency_notes?: string;
+}
+
+export interface TelemetryData {
+  acceleration_x: number;
+  acceleration_y: number;
+  acceleration_z: number;
+  gyro_x: number;
+  gyro_y: number;
+  gyro_z: number;
+  g_force: number;
+}
+
+interface CrashStore {
+  // Connection state
+  isConnected: boolean;
+  isSimulationMode: boolean;
+  batteryLevel: number;
+  
+  // Emergency state
+  isEmergencyActive: boolean;
+  currentImpact: ImpactEvent | null;
+  countdown: number;
+  
+  // Data
+  contacts: EmergencyContact[];
+  impacts: ImpactEvent[];
+  settings: DeviceSettings;
+  profile: UserProfile | null;
+  telemetry: TelemetryData;
+  
+  // Location
+  currentLocation: { latitude: number; longitude: number } | null;
+  
+  // Actions
+  setConnected: (connected: boolean) => void;
+  setSimulationMode: (enabled: boolean) => void;
+  setBatteryLevel: (level: number) => void;
+  setEmergencyActive: (active: boolean) => void;
+  setCurrentImpact: (impact: ImpactEvent | null) => void;
+  setCountdown: (count: number | ((prev: number) => number)) => void;
+  setContacts: (contacts: EmergencyContact[]) => void;
+  addContact: (contact: EmergencyContact) => void;
+  removeContact: (id: string) => void;
+  setImpacts: (impacts: ImpactEvent[]) => void;
+  addImpact: (impact: ImpactEvent) => void;
+  setSettings: (settings: DeviceSettings) => void;
+  updateSettings: (settings: Partial<DeviceSettings>) => void;
+  setProfile: (profile: UserProfile | null) => void;
+  setTelemetry: (telemetry: TelemetryData) => void;
+  setCurrentLocation: (location: { latitude: number; longitude: number } | null) => void;
+}
+
+const defaultSettings: DeviceSettings = {
+  id: 'default',
+  device_name: 'CASCO_V2.0',
+  impact_threshold: 5.0,
+  countdown_seconds: 30,
+  auto_call_enabled: true,
+  sms_enabled: true,
+  message_type: 'sms',
+  language: 'es',
+  theme: 'dark',
+};
+
+const defaultTelemetry: TelemetryData = {
+  acceleration_x: 0,
+  acceleration_y: 0,
+  acceleration_z: 1,
+  gyro_x: 0,
+  gyro_y: 0,
+  gyro_z: 0,
+  g_force: 1,
+};
+
+export const useCrashStore = create<CrashStore>((set, get) => ({
+  // Initial state
+  isConnected: false,
+  isSimulationMode: true, // Default to simulation mode
+  batteryLevel: 94,
+  isEmergencyActive: false,
+  currentImpact: null,
+  countdown: 30,
+  contacts: [],
+  impacts: [],
+  settings: defaultSettings,
+  profile: null,
+  telemetry: defaultTelemetry,
+  currentLocation: null,
+  
+  // Actions
+  setConnected: (connected) => set({ isConnected: connected }),
+  setSimulationMode: (enabled) => set({ isSimulationMode: enabled }),
+  setBatteryLevel: (level) => set({ batteryLevel: level }),
+  setEmergencyActive: (active) => set({ isEmergencyActive: active }),
+  setCurrentImpact: (impact) => set({ currentImpact: impact }),
+  setCountdown: (countOrFn) => {
+    if (typeof countOrFn === 'function') {
+      set((state) => ({ countdown: countOrFn(state.countdown) }));
+    } else {
+      set({ countdown: countOrFn });
+    }
+  },
+  
+  setContacts: (contacts) => set({ contacts }),
+  addContact: (contact) => set((state) => ({ contacts: [...state.contacts, contact] })),
+  removeContact: (id) => set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) })),
+  
+  setImpacts: (impacts) => set({ impacts }),
+  addImpact: (impact) => set((state) => ({ impacts: [impact, ...state.impacts] })),
+  
+  // Settings are persisted to backend API, not local storage
+  setSettings: (settings) => set({ settings }),
+  updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
+  
+  setProfile: (profile) => set({ profile }),
+  setTelemetry: (telemetry) => set({ telemetry }),
+  setCurrentLocation: (location) => set({ currentLocation: location }),
+}));

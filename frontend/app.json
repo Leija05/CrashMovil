@@ -1,0 +1,68 @@
+{
+  "expo": {
+    "name": "C.R.A.S.H.",
+    "slug": "crash-app",
+    "version": "2.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "crash",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.crash.safetyapp",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Track your location during emergencies",
+        "NSLocationAlwaysUsageDescription": "Send location to emergency contacts",
+        "NSBluetoothAlwaysUsageDescription": "Connect to C.R.A.S.H. helmet device",
+        "NSBluetoothPeripheralUsageDescription": "Receive impact alerts from helmet"
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#0c0c0c"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.crash.safetyapp",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_CONNECT",
+        "BLUETOOTH_SCAN",
+        "SEND_SMS",
+        "VIBRATE",
+        "CALL_PHONE"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0c0c0c"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow C.R.A.S.H. to use your location for emergency alerts."
+        }
+      ],
+      "expo-sensors"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
