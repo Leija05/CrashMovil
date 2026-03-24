@@ -1,5 +1,4 @@
 import axios from 'axios';
-import Constants from 'expo-constants';
 
 const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://device-crash-tool.preview.emergentagent.com';
 
@@ -11,6 +10,29 @@ const api = axios.create({
   timeout: 30000,
 });
 
+let authToken: string | null = null;
+
+export const setAuthToken = (token: string | null) => {
+  authToken = token;
+};
+
+api.interceptors.request.use((config) => {
+  if (authToken) {
+    config.headers.Authorization = `Bearer ${authToken}`;
+  }
+  return config;
+});
+
+// Auth
+export const authApi = {
+  register: (data: { email: string; password: string; full_name?: string }) =>
+    api.post('/auth/register', data),
+  login: (data: { email: string; password: string }) => api.post('/auth/login', data),
+  oauthLogin: (data: { provider: 'google' | 'apple'; email: string; provider_token: string; full_name?: string }) =>
+    api.post('/auth/oauth', data),
+  me: () => api.get('/auth/me'),
+};
+
 // Emergency Contacts
 export const contactsApi = {
   getAll: () => api.get('/contacts'),
@@ -19,6 +41,7 @@ export const contactsApi = {
   update: (id: string, data: { name: string; phone: string; relationship: string; is_primary: boolean }) =>
     api.put(`/contacts/${id}`, data),
   delete: (id: string) => api.delete(`/contacts/${id}`),
+  confirmOptIn: (data: { token: string; response_text: string }) => api.post('/contacts/opt-in/confirm', data),
 };
 
 // Impact Events
@@ -48,6 +71,7 @@ export const settingsApi = {
     countdown_seconds: number;
     auto_call_enabled: boolean;
     sms_enabled: boolean;
+    message_type: 'sms' | 'whatsapp';
     language: string;
     theme: string;
   }>) => api.put('/settings', data),

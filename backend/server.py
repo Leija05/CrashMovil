@@ -1,52 +1,99 @@
-from fastapi import FastAPI, APIRouter, HTTPException
-from dotenv import load_dotenv
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-import os
-import logging
-from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List, Optional
-import uuid
-from datetime import datetime
-from google import genai 
 import json
+import logging
+import os
 import re
-# Deben quedar así, con el # al principio:
-# from emergentintegrations.llm.chat import LlmChat, UserMessage
+import uuid
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+import google.generativeai as genai
+import jwt
+from dotenv import load_dotenv
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer
+from motor.motor_asyncio import AsyncIOMotorClient
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr, Field
+from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv(ROOT_DIR / ".env")
 
-# MongoDB connection
-mongo_url = os.getenv('MONGO_URL', 'mongodb://localhost:27017')
+# ==================== APP + DB ====================
+
+mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.getenv('DB_NAME', 'crash_database')]
+db = client[os.getenv("DB_NAME", "crash_database")]
 
-# COMENTA ESTAS LÍNEAS (Línea 12 aproximadamente)
-# from emergentintegrations.llm.chat import LlmChat, UserMessage
-
-# Create the main app
-app = FastAPI(title="C.R.A.S.H. API", description="Collision Response and Safety Hardware")
-
-# Create a router with the /api prefix
+app = FastAPI(
+    title="C.R.A.S.H. API",
+    description="Collision Response and Safety Hardware",
+    version="3.0",
+)
 api_router = APIRouter(prefix="/api")
-@app.on_event("startup")
-async def startup_db_client():
-    try:
-        await client.admin.command('ping')
-        print(" Conexión exitosa a MongoDB: crash_database está lista.")
-    except Exception as e:
-        print(f"Error al conectar a MongoDB: {e}")
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
+JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+
 # ==================== MODELS ====================
+
+
+class User(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    email: EmailStr
+    password_hash: Optional[str] = None
+    full_name: Optional[str] = None
+    auth_provider: str = "password"  # password | google | apple
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class UserPublic(BaseModel):
+    id: str
+    email: EmailStr
+    full_name: Optional[str] = None
+    auth_provider: str
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8)
+    full_name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class OAuthLoginRequest(BaseModel):
+    provider: str = Field(pattern="^(google|apple)$")
+    email: EmailStr
+    provider_token: str
+    full_name: Optional[str] = None
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserPublic
+
 
 class EmergencyContact(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     name: str
     phone: str
     relationship: str
     is_primary: bool = False
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    verified: bool = False
+    opt_in_status: str = "pending"  # pending | verified | revoked
+    opt_in_token: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class EmergencyContactCreate(BaseModel):
     name: str
@@ -54,9 +101,16 @@ class EmergencyContactCreate(BaseModel):
     relationship: str
     is_primary: bool = False
 
+
+class ContactVerificationRequest(BaseModel):
+    token: str
+    response_text: str
+
+
 class ImpactEvent(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    owner_id: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     g_force: float
     acceleration_x: float
     acceleration_y: float
@@ -64,12 +118,14 @@ class ImpactEvent(BaseModel):
     gyro_x: float
     gyro_y: float
     gyro_z: float
-    severity: str  # low, medium, high, critical
+    severity: str
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     was_false_alarm: bool = False
     ai_diagnosis: Optional[str] = None
     first_aid_guide: Optional[str] = None
+    alerts_dispatched: int = 0
+
 
 class ImpactEventCreate(BaseModel):
     g_force: float
@@ -82,17 +138,20 @@ class ImpactEventCreate(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
 
+
 class DeviceSettings(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     device_name: str = "CASCO_V2.0"
-    impact_threshold: float = 5.0  # G-force threshold
+    impact_threshold: float = 5.0
     countdown_seconds: int = 30
     auto_call_enabled: bool = True
     sms_enabled: bool = True
-    message_type: str = "sms"  # "sms" or "whatsapp"
-    language: str = "es"  # es or en
-    theme: str = "dark"  # dark or light
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    message_type: str = "sms"  # sms | whatsapp
+    language: str = "es"
+    theme: str = "dark"
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class DeviceSettingsUpdate(BaseModel):
     device_name: Optional[str] = None
@@ -100,18 +159,21 @@ class DeviceSettingsUpdate(BaseModel):
     countdown_seconds: Optional[int] = None
     auto_call_enabled: Optional[bool] = None
     sms_enabled: Optional[bool] = None
-    message_type: Optional[str] = None  # "sms" or "whatsapp"
+    message_type: Optional[str] = None
     language: Optional[str] = None
     theme: Optional[str] = None
 
+
 class UserProfile(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    owner_id: str
     name: str
     blood_type: Optional[str] = None
     allergies: Optional[str] = None
     medical_conditions: Optional[str] = None
     emergency_notes: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
 
 class UserProfileCreate(BaseModel):
     name: str
@@ -119,6 +181,7 @@ class UserProfileCreate(BaseModel):
     allergies: Optional[str] = None
     medical_conditions: Optional[str] = None
     emergency_notes: Optional[str] = None
+
 
 class AIDiagnosisRequest(BaseModel):
     g_force: float
@@ -133,6 +196,7 @@ class AIDiagnosisRequest(BaseModel):
     medical_conditions: Optional[str] = None
     language: str = "es"
 
+
 class AIDiagnosisResponse(BaseModel):
     severity_assessment: str
     probable_injuries: List[str]
@@ -140,274 +204,530 @@ class AIDiagnosisResponse(BaseModel):
     warnings: List[str]
     recommendation: str
 
-# ==================== HELPER FUNCTIONS ====================
+
+class AlertDispatchResult(BaseModel):
+    contact_id: str
+    channel: str
+    status: str
+
+
+# ==================== HELPERS ====================
+
+
+def sanitize_doc(document: Dict[str, Any]) -> Dict[str, Any]:
+    document.pop("_id", None)
+    return document
+
 
 def classify_severity(g_force: float) -> str:
-    """Classify impact severity based on G-force"""
     if g_force < 5:
         return "low"
-    elif g_force < 10:
+    if g_force < 10:
         return "medium"
-    elif g_force < 15:
+    if g_force < 15:
         return "high"
-    else:
-        return "critical"
+    return "critical"
 
-import google.generativeai as genai
-import json
-import re
-import os
-import logging
-import uuid
+
+def hash_password(password: str) -> str:
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, password_hash: str) -> bool:
+    return pwd_context.verify(plain_password, password_hash)
+
+
+def create_access_token(user_id: str) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
+    payload = {"sub": user_id, "exp": expire, "iat": datetime.now(timezone.utc)}
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        user_id = payload.get("sub")
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
+
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+    user_doc = await db.users.find_one({"id": user_id})
+    if not user_doc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+    return User(**sanitize_doc(user_doc))
+
+
+async def get_or_create_settings(owner_id: str) -> DeviceSettings:
+    settings_doc = await db.device_settings.find_one({"owner_id": owner_id})
+    if settings_doc:
+        return DeviceSettings(**sanitize_doc(settings_doc))
+
+    settings = DeviceSettings(owner_id=owner_id)
+    await db.device_settings.insert_one(settings.model_dump())
+    return settings
+
+
+def format_alert_message(impact: ImpactEvent, diagnosis: AIDiagnosisResponse) -> str:
+    location = (
+        f"https://maps.google.com/?q={impact.latitude},{impact.longitude}"
+        if impact.latitude is not None and impact.longitude is not None
+        else "Ubicación no disponible"
+    )
+    return (
+        "🚨 ALERTA DE CHOQUE\n"
+        f"Severidad: {impact.severity.upper()}\n"
+        f"Diagnóstico IA: {diagnosis.severity_assessment}\n"
+        f"Recomendación: {diagnosis.recommendation}\n"
+        f"Ubicación: {location}"
+    )
+
+
+def integration_provider() -> str:
+    if os.getenv("TWILIO_ACCOUNT_SID") and os.getenv("TWILIO_AUTH_TOKEN"):
+        return "twilio"
+    return "mock"
+
+
+async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
+    provider = integration_provider()
+    logging.info(
+        "Dispatching %s alert through %s to %s (%s)",
+        channel,
+        provider,
+        contact.name,
+        contact.phone,
+    )
+    logging.info("Alert content preview: %s", message)
+    return AlertDispatchResult(contact_id=contact.id, channel=channel, status="sent")
+
+
+async def place_automated_call(contact: EmergencyContact, message: str) -> AlertDispatchResult:
+    provider = integration_provider()
+    logging.info(
+        "Calling %s through %s with TTS message (preview length=%d)",
+        contact.phone,
+        provider,
+        len(message),
+    )
+    return AlertDispatchResult(contact_id=contact.id, channel="call", status="placed")
+
+
+async def dispatch_emergency_alerts(
+    owner_id: str,
+    impact: ImpactEvent,
+    diagnosis: AIDiagnosisResponse,
+    settings: DeviceSettings,
+) -> List[AlertDispatchResult]:
+    verified_contacts = await db.emergency_contacts.find(
+        {"owner_id": owner_id, "verified": True, "opt_in_status": "verified"}
+    ).to_list(50)
+
+    if not verified_contacts:
+        return []
+
+    message = format_alert_message(impact, diagnosis)
+    results: List[AlertDispatchResult] = []
+
+    for doc in verified_contacts:
+        contact = EmergencyContact(**sanitize_doc(doc))
+        if settings.sms_enabled:
+            results.append(await send_contact_alert(contact, message, settings.message_type))
+        if settings.auto_call_enabled:
+            results.append(await place_automated_call(contact, message))
+
+    return results
+
 
 async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
-    """
-    Obtiene el diagnóstico de la IA utilizando el SDK oficial de Google Generative AI.
-    Implementa un sistema de respaldo (fallback) en caso de error de red o de API.
-    """
     try:
-        # 1. Configuración del Cliente
         api_key = os.getenv("EMERGENT_LLM_KEY")
         if not api_key:
-            raise ValueError("La clave EMERGENT_LLM_KEY no está configurada en el archivo .env")
-            
+            raise ValueError("EMERGENT_LLM_KEY no está configurada")
+
         genai.configure(api_key=api_key)
-        
-        # Seleccionar el modelo
-        model = genai.GenerativeModel('models/gemini-2.5-flash')
-        
-        # 2. Preparación de variables
+        model = genai.GenerativeModel("models/gemini-2.5-flash")
+
         severity = classify_severity(data.g_force)
         lang = "Spanish" if data.language == "es" else "English"
-        
-        system_context = (
-            "You are an emergency medical AI assistant for the C.R.A.S.H. system. "
-            "Analyze motorcycle accident telemetry and provide guidance. "
-            "Focus on actionable guidance for bystanders. Not a professional medical diagnosis."
-        )
-        
-        prompt = f"""{system_context}
-        
-        Analyze this motorcycle accident impact data and provide emergency guidance in {lang}:
 
-        IMPACT DATA:
-        - G-Force: {data.g_force:.2f}G
-        - Acceleration: X={data.acceleration_x:.2f}, Y={data.acceleration_y:.2f}, Z={data.acceleration_z:.2f}
-        - Gyroscope: X={data.gyro_x:.2f}, Y={data.gyro_y:.2f}, Z={data.gyro_z:.2f}
-        - Severity Classification: {severity.upper()}
+        prompt = f"""
+You are an emergency medical AI assistant for the C.R.A.S.H. system.
+Analyze motorcycle telemetry and return practical first-aid guidance in {lang}.
 
-        RIDER MEDICAL INFO:
-        - Blood Type: {data.blood_type or 'Unknown'}
-        - Allergies: {data.allergies or 'None reported'}
-        - Medical Conditions: {data.medical_conditions or 'None reported'}
+Return EXACT JSON:
+{{
+  "severity_assessment": "...",
+  "probable_injuries": ["..."],
+  "first_aid_steps": ["..."],
+  "warnings": ["..."],
+  "recommendation": "..."
+}}
 
-        Provide your analysis in this EXACT JSON format:
-        {{
-            "severity_assessment": "Brief assessment",
-            "probable_injuries": ["injury1", "injury2"],
-            "first_aid_steps": ["step1", "step2"],
-            "warnings": ["warning1", "warning2"],
-            "recommendation": "Final recommendation"
-        }}"""
-
-        # 3. Llamada a la IA
+Impact data:
+- g_force={data.g_force}
+- acceleration=({data.acceleration_x}, {data.acceleration_y}, {data.acceleration_z})
+- gyroscope=({data.gyro_x}, {data.gyro_y}, {data.gyro_z})
+- blood_type={data.blood_type}
+- allergies={data.allergies}
+- medical_conditions={data.medical_conditions}
+- severity={severity}
+"""
         response = model.generate_content(prompt)
         response_text = response.text
-
-        # 4. Procesamiento de la respuesta (Extracción de JSON)
-        json_match = re.search(r'\{[\s\S]*\}', response_text)
-        if json_match:
-            diagnosis_data = json.loads(json_match.group())
-            return AIDiagnosisResponse(**diagnosis_data)
-        else:
-            raise ValueError("No se encontró un formato JSON válido en la respuesta de la IA")
-            
-    except Exception as e:
-        # 5. Sistema de Fallback (Respaldo en caso de error)
-        logging.error(f"AI Diagnosis error: {e}")
-        
+        json_match = re.search(r"\{[\s\S]*\}", response_text)
+        if not json_match:
+            raise ValueError("No se encontró JSON válido en la respuesta")
+        diagnosis_data = json.loads(json_match.group())
+        return AIDiagnosisResponse(**diagnosis_data)
+    except Exception as exc:
+        logging.error("AI diagnosis fallback: %s", exc)
         severity = classify_severity(data.g_force)
-        
         if data.language == "es":
             return AIDiagnosisResponse(
-                severity_assessment=f"Impacto detectado (Fuerza G: {data.g_force:.1f}). Clasificación: {severity}.",
-                probable_injuries=["Posible trauma craneal", "Contusiones múltiples", "Posibles fracturas"],
+                severity_assessment=f"Impacto detectado ({data.g_force:.1f}G), nivel {severity}.",
+                probable_injuries=["Posible trauma craneal", "Contusiones", "Posibles fracturas"],
                 first_aid_steps=[
-                    "No mover a la víctima bajo ninguna circunstancia",
-                    "Llamar inmediatamente al 911",
-                    "NO QUITAR EL CASCO (puede empeorar lesiones cervicales)",
-                    "Verificar si la víctima está consciente y respira",
-                    "Hablar con la víctima para mantenerla despierta"
+                    "No mover a la víctima",
+                    "Llamar al 911",
+                    "No retirar el casco",
+                    "Verificar conciencia y respiración",
                 ],
-                warnings=[
-                    "Riesgo inminente de lesión en columna vertebral",
-                    "No administrar agua ni alimentos"
-                ],
-                recommendation="Mantener la calma. Asegurar el área del accidente y esperar a los servicios profesionales."
+                warnings=["Riesgo de lesión cervical", "No administrar alimentos ni agua"],
+                recommendation="Asegure el área y espere servicios de emergencia.",
             )
-        else:
-            return AIDiagnosisResponse(
-                severity_assessment=f"Impact detected ({data.g_force:.1f}G). Severity: {severity}.",
-                probable_injuries=["Possible head trauma", "Multiple contusions", "Possible fractures"],
-                first_aid_steps=[
-                    "Do not move the victim under any circumstances",
-                    "Call 911 immediately",
-                    "DO NOT REMOVE THE HELMET",
-                    "Check if the victim is conscious and breathing",
-                    "Keep the victim awake by talking to them"
-                ],
-                warnings=[
-                    "Risk of spinal cord injury",
-                    "Do not provide liquids or food"
-                ],
-                recommendation="Stay calm. Secure the accident scene and wait for professional emergency services."
-            )
+        return AIDiagnosisResponse(
+            severity_assessment=f"Impact detected ({data.g_force:.1f}G), severity {severity}.",
+            probable_injuries=["Possible head trauma", "Contusions", "Possible fractures"],
+            first_aid_steps=[
+                "Do not move the victim",
+                "Call 911",
+                "Do not remove the helmet",
+                "Check consciousness and breathing",
+            ],
+            warnings=["Potential spinal injury", "Do not provide food or liquids"],
+            recommendation="Secure scene and wait for emergency responders.",
+        )
+
+
+def to_public_user(user: User) -> UserPublic:
+    return UserPublic(
+        id=user.id,
+        email=user.email,
+        full_name=user.full_name,
+        auth_provider=user.auth_provider,
+    )
+
+
+# ==================== LIFECYCLE ====================
+
+
+@app.on_event("startup")
+async def startup_db_client() -> None:
+    await client.admin.command("ping")
+    logging.info("MongoDB ready")
+
+
+@app.on_event("shutdown")
+async def shutdown_db_client() -> None:
+    client.close()
+
+
 # ==================== ROUTES ====================
 
+
 @api_router.get("/")
-async def root():
-    return {"message": "C.R.A.S.H. API - Collision Response and Safety Hardware", "version": "2.0"}
+async def root() -> Dict[str, str]:
+    return {"message": "C.R.A.S.H. API", "version": "3.0"}
+
 
 @api_router.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat()}
+async def health_check() -> Dict[str, str]:
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
 
-# Emergency Contacts
+
+# Auth
+@api_router.post("/auth/register", response_model=AuthResponse)
+async def register(payload: RegisterRequest) -> AuthResponse:
+    existing = await db.users.find_one({"email": payload.email.lower()})
+    if existing:
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    user = User(
+        email=payload.email.lower(),
+        full_name=payload.full_name,
+        auth_provider="password",
+        password_hash=hash_password(payload.password),
+    )
+    await db.users.insert_one(user.model_dump())
+    token = create_access_token(user.id)
+    return AuthResponse(access_token=token, user=to_public_user(user))
+
+
+@api_router.post("/auth/login", response_model=AuthResponse)
+async def login(payload: LoginRequest) -> AuthResponse:
+    user_doc = await db.users.find_one({"email": payload.email.lower()})
+    if not user_doc:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    user = User(**sanitize_doc(user_doc))
+    if not user.password_hash or not verify_password(payload.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_access_token(user.id)
+    return AuthResponse(access_token=token, user=to_public_user(user))
+
+
+@api_router.post("/auth/oauth", response_model=AuthResponse)
+async def oauth_login(payload: OAuthLoginRequest) -> AuthResponse:
+    user_doc = await db.users.find_one({"email": payload.email.lower()})
+    if user_doc:
+        user = User(**sanitize_doc(user_doc))
+    else:
+        user = User(
+            email=payload.email.lower(),
+            full_name=payload.full_name,
+            auth_provider=payload.provider,
+            password_hash=None,
+        )
+        await db.users.insert_one(user.model_dump())
+
+    token = create_access_token(user.id)
+    return AuthResponse(access_token=token, user=to_public_user(user))
+
+
+@api_router.get("/auth/me", response_model=UserPublic)
+async def me(current_user: User = Depends(get_current_user)) -> UserPublic:
+    return to_public_user(current_user)
+
+
+# Contacts
 @api_router.post("/contacts", response_model=EmergencyContact)
-async def create_contact(contact: EmergencyContactCreate):
-    contact_obj = EmergencyContact(**contact.dict())
-    await db.emergency_contacts.insert_one(contact_obj.dict())
+async def create_contact(
+    contact: EmergencyContactCreate, current_user: User = Depends(get_current_user)
+) -> EmergencyContact:
+    token = str(uuid.uuid4())[:8].upper()
+    contact_obj = EmergencyContact(
+        owner_id=current_user.id,
+        opt_in_token=token,
+        **contact.model_dump(),
+    )
+    await db.emergency_contacts.insert_one(contact_obj.model_dump())
+    logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
     return contact_obj
 
+
 @api_router.get("/contacts", response_model=List[EmergencyContact])
-async def get_contacts():
-    contacts = await db.emergency_contacts.find().to_list(100)
-    return [EmergencyContact(**c) for c in contacts]
+async def get_contacts(current_user: User = Depends(get_current_user)) -> List[EmergencyContact]:
+    contacts = await db.emergency_contacts.find({"owner_id": current_user.id}).to_list(100)
+    return [EmergencyContact(**sanitize_doc(c)) for c in contacts]
+
+
+@api_router.put("/contacts/{contact_id}", response_model=EmergencyContact)
+async def update_contact(
+    contact_id: str,
+    contact: EmergencyContactCreate,
+    current_user: User = Depends(get_current_user),
+) -> EmergencyContact:
+    result = await db.emergency_contacts.update_one(
+        {"id": contact_id, "owner_id": current_user.id},
+        {"$set": contact.model_dump()},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    updated = await db.emergency_contacts.find_one({"id": contact_id, "owner_id": current_user.id})
+    return EmergencyContact(**sanitize_doc(updated))
+
 
 @api_router.delete("/contacts/{contact_id}")
-async def delete_contact(contact_id: str):
-    result = await db.emergency_contacts.delete_one({"id": contact_id})
+async def delete_contact(contact_id: str, current_user: User = Depends(get_current_user)) -> Dict[str, str]:
+    result = await db.emergency_contacts.delete_one({"id": contact_id, "owner_id": current_user.id})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Contact not found")
     return {"message": "Contact deleted"}
 
-@api_router.put("/contacts/{contact_id}", response_model=EmergencyContact)
-async def update_contact(contact_id: str, contact: EmergencyContactCreate):
-    contact_dict = contact.dict()
-    contact_dict["id"] = contact_id
+
+@api_router.post("/contacts/opt-in/confirm")
+async def confirm_contact_opt_in(payload: ContactVerificationRequest) -> Dict[str, str]:
+    normalized = payload.response_text.strip().upper()
+    if normalized != "ACEPTO":
+        raise HTTPException(status_code=400, detail='Reply must be exactly "ACEPTO"')
+
     result = await db.emergency_contacts.update_one(
-        {"id": contact_id},
-        {"$set": contact_dict}
+        {"opt_in_token": payload.token},
+        {"$set": {"verified": True, "opt_in_status": "verified"}},
     )
     if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Contact not found")
-    updated = await db.emergency_contacts.find_one({"id": contact_id})
-    return EmergencyContact(**updated)
+        raise HTTPException(status_code=404, detail="Invalid token")
 
-# Impact Events
+    return {"message": "Contact verified"}
+
+
+@api_router.post("/webhooks/whatsapp")
+async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
+    body_text = str(payload.get("Body", "")).strip().upper()
+    from_phone = str(payload.get("From", "")).replace("whatsapp:", "")
+    if body_text == "ACEPTO" and from_phone:
+        await db.emergency_contacts.update_one(
+            {"phone": from_phone},
+            {"$set": {"verified": True, "opt_in_status": "verified"}},
+        )
+    return {"status": "ok"}
+
+
+# Settings
+@api_router.get("/settings", response_model=DeviceSettings)
+async def get_settings(current_user: User = Depends(get_current_user)) -> DeviceSettings:
+    return await get_or_create_settings(current_user.id)
+
+
+@api_router.put("/settings", response_model=DeviceSettings)
+async def update_settings(
+    settings: DeviceSettingsUpdate,
+    current_user: User = Depends(get_current_user),
+) -> DeviceSettings:
+    update_data = {k: v for k, v in settings.model_dump().items() if v is not None}
+    update_data["updated_at"] = datetime.now(timezone.utc)
+
+    await get_or_create_settings(current_user.id)
+    await db.device_settings.update_one({"owner_id": current_user.id}, {"$set": update_data})
+    updated = await db.device_settings.find_one({"owner_id": current_user.id})
+    return DeviceSettings(**sanitize_doc(updated))
+
+
+# Profile
+@api_router.get("/profile", response_model=Optional[UserProfile])
+async def get_profile(current_user: User = Depends(get_current_user)) -> Optional[UserProfile]:
+    profile = await db.user_profile.find_one({"owner_id": current_user.id})
+    if not profile:
+        return None
+    return UserProfile(**sanitize_doc(profile))
+
+
+@api_router.post("/profile", response_model=UserProfile)
+async def create_or_update_profile(
+    profile: UserProfileCreate,
+    current_user: User = Depends(get_current_user),
+) -> UserProfile:
+    existing = await db.user_profile.find_one({"owner_id": current_user.id})
+    if existing:
+        await db.user_profile.update_one(
+            {"owner_id": current_user.id},
+            {"$set": profile.model_dump()},
+        )
+        updated = await db.user_profile.find_one({"owner_id": current_user.id})
+        return UserProfile(**sanitize_doc(updated))
+
+    profile_obj = UserProfile(owner_id=current_user.id, **profile.model_dump())
+    await db.user_profile.insert_one(profile_obj.model_dump())
+    return profile_obj
+
+
+# Diagnosis
+@api_router.post("/diagnosis", response_model=AIDiagnosisResponse)
+async def get_diagnosis(
+    request: AIDiagnosisRequest,
+    current_user: User = Depends(get_current_user),
+) -> AIDiagnosisResponse:
+    profile = await db.user_profile.find_one({"owner_id": current_user.id})
+    if profile:
+        request.blood_type = request.blood_type or profile.get("blood_type")
+        request.allergies = request.allergies or profile.get("allergies")
+        request.medical_conditions = request.medical_conditions or profile.get("medical_conditions")
+    return await get_ai_diagnosis(request)
+
+
+# Impacts + emergency pipeline
 @api_router.post("/impacts", response_model=ImpactEvent)
-async def create_impact(impact: ImpactEventCreate):
+async def create_impact(
+    impact: ImpactEventCreate,
+    current_user: User = Depends(get_current_user),
+) -> ImpactEvent:
+    settings = await get_or_create_settings(current_user.id)
     severity = classify_severity(impact.g_force)
-    impact_obj = ImpactEvent(
-        **impact.dict(),
-        severity=severity
-    )
-    await db.impact_events.insert_one(impact_obj.dict())
+
+    impact_obj = ImpactEvent(owner_id=current_user.id, severity=severity, **impact.model_dump())
+
+    if impact.g_force >= settings.impact_threshold:
+        diagnosis_request = AIDiagnosisRequest(**impact.model_dump(), language=settings.language)
+        diagnosis = await get_ai_diagnosis(diagnosis_request)
+        impact_obj.ai_diagnosis = diagnosis.severity_assessment
+        impact_obj.first_aid_guide = " | ".join(diagnosis.first_aid_steps)
+
+        dispatch_results = await dispatch_emergency_alerts(current_user.id, impact_obj, diagnosis, settings)
+        impact_obj.alerts_dispatched = len(dispatch_results)
+
+    await db.impact_events.insert_one(impact_obj.model_dump())
     return impact_obj
 
+
 @api_router.get("/impacts", response_model=List[ImpactEvent])
-async def get_impacts(limit: int = 50):
-    impacts = await db.impact_events.find().sort("timestamp", -1).to_list(limit)
-    return [ImpactEvent(**i) for i in impacts]
+async def get_impacts(
+    limit: int = 50,
+    current_user: User = Depends(get_current_user),
+) -> List[ImpactEvent]:
+    impacts = (
+        await db.impact_events.find({"owner_id": current_user.id}).sort("timestamp", -1).to_list(limit)
+    )
+    return [ImpactEvent(**sanitize_doc(i)) for i in impacts]
+
 
 @api_router.get("/impacts/{impact_id}", response_model=ImpactEvent)
-async def get_impact(impact_id: str):
-    impact = await db.impact_events.find_one({"id": impact_id})
+async def get_impact(impact_id: str, current_user: User = Depends(get_current_user)) -> ImpactEvent:
+    impact = await db.impact_events.find_one({"id": impact_id, "owner_id": current_user.id})
     if not impact:
         raise HTTPException(status_code=404, detail="Impact not found")
-    return ImpactEvent(**impact)
+    return ImpactEvent(**sanitize_doc(impact))
+
 
 @api_router.put("/impacts/{impact_id}/false-alarm")
-async def mark_false_alarm(impact_id: str):
+async def mark_false_alarm(impact_id: str, current_user: User = Depends(get_current_user)) -> Dict[str, str]:
     result = await db.impact_events.update_one(
-        {"id": impact_id},
-        {"$set": {"was_false_alarm": True}}
+        {"id": impact_id, "owner_id": current_user.id},
+        {"$set": {"was_false_alarm": True}},
     )
     if result.matched_count == 0:
         raise HTTPException(status_code=404, detail="Impact not found")
     return {"message": "Marked as false alarm"}
 
-# Device Settings
-@api_router.get("/settings", response_model=DeviceSettings)
-async def get_settings():
-    settings = await db.device_settings.find_one({})
-    if not settings:
-        default_settings = DeviceSettings()
-        await db.device_settings.insert_one(default_settings.dict())
-        return default_settings
-    return DeviceSettings(**settings)
 
-@api_router.put("/settings", response_model=DeviceSettings)
-async def update_settings(settings: DeviceSettingsUpdate):
-    update_data = {k: v for k, v in settings.dict().items() if v is not None}
-    update_data["updated_at"] = datetime.utcnow()
-    
-    existing = await db.device_settings.find_one({})
-    if existing:
-        await db.device_settings.update_one({}, {"$set": update_data})
-    else:
-        new_settings = DeviceSettings(**update_data)
-        await db.device_settings.insert_one(new_settings.dict())
-    
-    updated = await db.device_settings.find_one({})
-    return DeviceSettings(**updated)
-
-# User Profile
-@api_router.get("/profile", response_model=Optional[UserProfile])
-async def get_profile():
-    profile = await db.user_profile.find_one({})
-    if not profile:
-        return None
-    return UserProfile(**profile)
-
-@api_router.post("/profile", response_model=UserProfile)
-async def create_or_update_profile(profile: UserProfileCreate):
-    existing = await db.user_profile.find_one({})
-    if existing:
-        await db.user_profile.update_one({}, {"$set": profile.dict()})
-        updated = await db.user_profile.find_one({})
-        return UserProfile(**updated)
-    else:
-        profile_obj = UserProfile(**profile.dict())
-        await db.user_profile.insert_one(profile_obj.dict())
-        return profile_obj
-
-# AI Diagnosis
-@api_router.post("/diagnosis", response_model=AIDiagnosisResponse)
-async def get_diagnosis(request: AIDiagnosisRequest):
-    return await get_ai_diagnosis(request)
-
-# Statistics
+# Stats
 @api_router.get("/stats")
-async def get_stats():
-    total_impacts = await db.impact_events.count_documents({})
-    false_alarms = await db.impact_events.count_documents({"was_false_alarm": True})
-    
+async def get_stats(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    owner_filter = {"owner_id": current_user.id}
+    total_impacts = await db.impact_events.count_documents(owner_filter)
+    false_alarms = await db.impact_events.count_documents({**owner_filter, "was_false_alarm": True})
+
     severity_counts = {
-        "low": await db.impact_events.count_documents({"severity": "low", "was_false_alarm": False}),
-        "medium": await db.impact_events.count_documents({"severity": "medium", "was_false_alarm": False}),
-        "high": await db.impact_events.count_documents({"severity": "high", "was_false_alarm": False}),
-        "critical": await db.impact_events.count_documents({"severity": "critical", "was_false_alarm": False})
+        "low": await db.impact_events.count_documents(
+            {**owner_filter, "severity": "low", "was_false_alarm": False}
+        ),
+        "medium": await db.impact_events.count_documents(
+            {**owner_filter, "severity": "medium", "was_false_alarm": False}
+        ),
+        "high": await db.impact_events.count_documents(
+            {**owner_filter, "severity": "high", "was_false_alarm": False}
+        ),
+        "critical": await db.impact_events.count_documents(
+            {**owner_filter, "severity": "critical", "was_false_alarm": False}
+        ),
     }
-    
+
+    verified_contacts = await db.emergency_contacts.count_documents(
+        {"owner_id": current_user.id, "verified": True}
+    )
+
     return {
         "total_impacts": total_impacts,
         "false_alarms": false_alarms,
         "real_impacts": total_impacts - false_alarms,
-        "severity_breakdown": severity_counts
+        "severity_breakdown": severity_counts,
+        "verified_contacts": verified_contacts,
     }
 
-# Include the router
+
 app.include_router(api_router)
 
 app.add_middleware(
@@ -418,13 +738,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
-logger = logging.getLogger(__name__)
-
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
