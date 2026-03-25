@@ -41,6 +41,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+GEMINI_COOLDOWN_UNTIL: Optional[datetime] = None
 
 # ==================== MODELS ====================
 
@@ -345,7 +346,14 @@ async def dispatch_emergency_alerts(
 
 
 async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
+    global GEMINI_COOLDOWN_UNTIL
+
     try:
+        if GEMINI_COOLDOWN_UNTIL and datetime.now(timezone.utc) < GEMINI_COOLDOWN_UNTIL:
+            remaining = int((GEMINI_COOLDOWN_UNTIL - datetime.now(timezone.utc)).total_seconds())
+            logging.warning("Skipping Gemini call due to active cooldown (%ss remaining)", max(remaining, 0))
+            raise RuntimeError("Gemini cooldown active")
+
         api_key = os.getenv("EMERGENT_LLM_KEY")
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
@@ -386,9 +394,27 @@ Impact data:
         if not json_match:
             raise ValueError("No se encontró JSON válido en la respuesta")
         diagnosis_data = json.loads(json_match.group())
+        GEMINI_COOLDOWN_UNTIL = None
         return AIDiagnosisResponse(**diagnosis_data)
     except Exception as exc:
-        logging.error("AI diagnosis fallback: %s", exc)
+        error_text = str(exc)
+        if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
+            retry_seconds = 60
+            retry_match = re.search(r"retry in ([0-9]+(?:\\.[0-9]+)?)s", error_text, re.IGNORECASE)
+            if retry_match:
+                retry_seconds = int(float(retry_match.group(1)))
+            else:
+                delay_match = re.search(r"retryDelay['\"]?:\\s*'?(\\d+)s", error_text, re.IGNORECASE)
+                if delay_match:
+                    retry_seconds = int(delay_match.group(1))
+
+            GEMINI_COOLDOWN_UNTIL = datetime.now(timezone.utc) + timedelta(seconds=retry_seconds)
+            logging.warning("Gemini quota exceeded. Entering cooldown for %ss.", retry_seconds)
+        elif "Gemini cooldown active" in error_text:
+            logging.info("Using fallback diagnosis while Gemini cooldown is active.")
+        else:
+            logging.error("AI diagnosis fallback: %s", exc)
+
         severity = classify_severity(data.g_force)
         if data.language == "es":
             return AIDiagnosisResponse(
