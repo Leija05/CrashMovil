@@ -18,7 +18,7 @@ export default function DiagnosisScreen() {
   const { t } = useTranslation();
   const router = useRouter();
   const params = useLocalSearchParams();
-  const { profile, settings } = useCrashStore();
+  const { profile, settings, user } = useCrashStore();
   const isDark = settings.theme === 'dark';
   
   const [diagnosis, setDiagnosis] = useState<any>(null);
@@ -34,6 +34,32 @@ export default function DiagnosisScreen() {
     setError(null);
     
     try {
+      if (!user) {
+        setDiagnosis({
+          severity_assessment:
+            settings.language === 'es'
+              ? 'Diagnóstico local (sin sesión iniciada).'
+              : 'Local diagnosis (not signed in).',
+          probable_injuries: [
+            settings.language === 'es' ? 'Posibles contusiones' : 'Possible contusions',
+          ],
+          first_aid_steps: [
+            settings.language === 'es' ? 'Llamar al 911' : 'Call 911',
+            settings.language === 'es' ? 'No mover a la víctima' : 'Do not move the victim',
+          ],
+          warnings: [
+            settings.language === 'es'
+              ? 'Inicia sesión para diagnóstico IA completo'
+              : 'Sign in for full AI diagnosis',
+          ],
+          recommendation:
+            settings.language === 'es'
+              ? 'Acude a servicios de emergencia.'
+              : 'Seek emergency services immediately.',
+        });
+        return;
+      }
+
       const response = await diagnosisApi.get({
         g_force: parseFloat(params.gForce as string),
         acceleration_x: parseFloat(params.accelerationX as string),

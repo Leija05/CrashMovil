@@ -7,11 +7,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from google import genai
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
@@ -347,8 +347,7 @@ async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        client = genai.Client(api_key=api_key)
 
         severity = classify_severity(data.g_force)
         lang = "Spanish" if data.language == "es" else "English"
@@ -375,8 +374,11 @@ Impact data:
 - medical_conditions={data.medical_conditions}
 - severity={severity}
 """
-        response = model.generate_content(prompt)
-        response_text = response.text
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        response_text = response.text or ""
         json_match = re.search(r"\{[\s\S]*\}", response_text)
         if not json_match:
             raise ValueError("No se encontró JSON válido en la respuesta")

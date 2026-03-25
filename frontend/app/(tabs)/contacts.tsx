@@ -17,7 +17,7 @@ import { ContactModal } from '../../src/components/ContactModal';
 
 export default function ContactsScreen() {
   const { t } = useTranslation();
-  const { contacts, setContacts, settings } = useCrashStore();
+  const { contacts, setContacts, settings, user } = useCrashStore();
   const isDark = settings.theme === 'dark';
   
   const [modalVisible, setModalVisible] = useState(false);
@@ -25,15 +25,20 @@ export default function ContactsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   
   useEffect(() => {
-    loadContacts();
-  }, []);
+    if (user) {
+      loadContacts();
+    } else {
+      setContacts([]);
+    }
+  }, [user]);
   
   const loadContacts = async () => {
+    if (!user) return;
     try {
       const response = await contactsApi.getAll();
       setContacts(response.data);
     } catch (error) {
-      console.error('Error loading contacts:', error);
+      console.log('Contacts unavailable without authentication');
     }
   };
   
@@ -44,6 +49,7 @@ export default function ContactsScreen() {
   }, []);
   
   const handleAddContact = () => {
+    if (!user) return;
     setEditingContact(null);
     setModalVisible(true);
   };
@@ -136,7 +142,16 @@ export default function ContactsScreen() {
         </TouchableOpacity>
       </View>
       
-      {contacts.length === 0 ? (
+      {!user ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="lock-closed-outline" size={60} color="#444" />
+          <Text style={styles.emptyText}>
+            {settings.language === 'es'
+              ? 'Inicia sesión en Perfil para gestionar contactos.'
+              : 'Sign in from Profile to manage contacts.'}
+          </Text>
+        </View>
+      ) : contacts.length === 0 ? (
         <View style={styles.emptyState}>
           <Ionicons name="people-outline" size={60} color="#444" />
           <Text style={styles.emptyText}>{t('noContacts')}</Text>

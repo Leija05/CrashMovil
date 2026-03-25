@@ -35,6 +35,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     profile,
     currentLocation,
     setEmergencyActive,
+    user,
   } = useCrashStore();
   
   // Local countdown state for the modal
@@ -211,6 +212,23 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     setLoadingDiagnosis(true);
     
     try {
+      if (!user) {
+        setDiagnosis({
+          severity_assessment:
+            settings.language === 'es'
+              ? 'Diagnóstico local (inicia sesión para IA completa).'
+              : 'Local diagnosis (sign in for full AI).',
+          probable_injuries: [],
+          first_aid_steps: [settings.language === 'es' ? 'Llamar al 911' : 'Call 911'],
+          warnings: [],
+          recommendation:
+            settings.language === 'es'
+              ? 'Mantener a la víctima inmóvil.'
+              : 'Keep victim still until responders arrive.',
+        });
+        return;
+      }
+
       const response = await diagnosisApi.get({
         g_force: impact.g_force,
         acceleration_x: impact.acceleration_x,
@@ -238,7 +256,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     pulseAnim.stopAnimation();
     setEmergencyActive(false);
     
-    if (impact) {
+    if (impact && user) {
       try {
         await impactsApi.markFalseAlarm(impact.id);
       } catch (error) {

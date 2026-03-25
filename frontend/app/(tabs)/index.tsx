@@ -62,6 +62,7 @@ export default function HomeScreen() {
     setContacts,
     setSettings,
     setConnected,
+    user,
   } = useCrashStore();
   
   const isDark = settings.theme === 'dark';
@@ -78,7 +79,13 @@ export default function HomeScreen() {
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
   
   useEffect(() => {
-    loadData();
+    if (user) {
+      loadData();
+    } else {
+      setContacts([]);
+      setImpacts([]);
+      setStats({ total_impacts: 0, real_impacts: 0, false_alarms: 0 });
+    }
     requestLocationPermission();
     startEntranceAnimations();
     
@@ -87,7 +94,7 @@ export default function HomeScreen() {
         clearInterval(simulationInterval.current);
       }
     };
-  }, []);
+  }, [user]);
   
   const startEntranceAnimations = () => {
     Animated.parallel([
@@ -119,6 +126,7 @@ export default function HomeScreen() {
   }, [isSimulationMode]);
   
   const loadData = async () => {
+    if (!user) return;
     try {
       const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
         contactsApi.getAll(),
@@ -198,6 +206,19 @@ export default function HomeScreen() {
       longitude: currentLocation?.longitude,
     };
     
+    if (!user) {
+      const localImpact: ImpactEvent = {
+        id: `sim-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        ...impactData,
+        severity: selectedSeverity,
+        was_false_alarm: false,
+      };
+      setCurrentImpact(localImpact);
+      setEmergencyActive(true);
+      return;
+    }
+
     try {
       const response = await impactsApi.create(impactData);
       const impact = response.data;
@@ -220,9 +241,11 @@ export default function HomeScreen() {
   
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await loadData();
+    if (user) {
+      await loadData();
+    }
     setRefreshing(false);
-  }, []);
+  }, [user]);
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {
