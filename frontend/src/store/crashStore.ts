@@ -46,6 +46,13 @@ export interface UserProfile {
   emergency_notes?: string;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string;
+  full_name?: string;
+  auth_provider: 'password' | 'google' | 'apple';
+}
+
 export interface TelemetryData {
   acceleration_x: number;
   acceleration_y: number;
@@ -72,6 +79,8 @@ interface CrashStore {
   impacts: ImpactEvent[];
   settings: DeviceSettings;
   profile: UserProfile | null;
+  authToken: string | null;
+  user: AuthUser | null;
   telemetry: TelemetryData;
   
   // Location
@@ -92,6 +101,7 @@ interface CrashStore {
   setSettings: (settings: DeviceSettings) => void;
   updateSettings: (settings: Partial<DeviceSettings>) => void;
   setProfile: (profile: UserProfile | null) => void;
+  setAuthSession: (token: string | null, user: AuthUser | null) => void;
   setTelemetry: (telemetry: TelemetryData) => void;
   setCurrentLocation: (location: { latitude: number; longitude: number } | null) => void;
 }
@@ -130,6 +140,8 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
   impacts: [],
   settings: defaultSettings,
   profile: null,
+  authToken: null,
+  user: null,
   telemetry: defaultTelemetry,
   currentLocation: null,
   
@@ -159,6 +171,7 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
   updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
   
   setProfile: (profile) => set({ profile }),
+  setAuthSession: (token, user) => set({ authToken: token, user }),
   setTelemetry: (telemetry) => set({ telemetry }),
   setCurrentLocation: (location) => set({ currentLocation: location }),
 }));
