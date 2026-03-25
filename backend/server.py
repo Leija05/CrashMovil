@@ -41,7 +41,6 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
-GEMINI_COOLDOWN_UNTIL: Optional[datetime] = None
 
 # ==================== MODELS ====================
 
@@ -346,14 +345,7 @@ async def dispatch_emergency_alerts(
 
 
 async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
-    global GEMINI_COOLDOWN_UNTIL
-
     try:
-        if GEMINI_COOLDOWN_UNTIL and datetime.now(timezone.utc) < GEMINI_COOLDOWN_UNTIL:
-            remaining = int((GEMINI_COOLDOWN_UNTIL - datetime.now(timezone.utc)).total_seconds())
-            logging.warning("Skipping Gemini call due to active cooldown (%ss remaining)", max(remaining, 0))
-            raise RuntimeError("Gemini cooldown active")
-
         api_key = os.getenv("EMERGENT_LLM_KEY")
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
@@ -394,31 +386,21 @@ Impact data:
         if not json_match:
             raise ValueError("No se encontró JSON válido en la respuesta")
         diagnosis_data = json.loads(json_match.group())
-        GEMINI_COOLDOWN_UNTIL = None
         return AIDiagnosisResponse(**diagnosis_data)
     except Exception as exc:
-        error_text = str(exc)
-        if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
-            retry_seconds = 60
-            retry_match = re.search(r"retry in ([0-9]+(?:\\.[0-9]+)?)s", error_text, re.IGNORECASE)
-            if retry_match:
-                retry_seconds = int(float(retry_match.group(1)))
-            else:
-                delay_match = re.search(r"retryDelay['\"]?:\\s*'?(\\d+)s", error_text, re.IGNORECASE)
-                if delay_match:
-                    retry_seconds = int(delay_match.group(1))
-
-            GEMINI_COOLDOWN_UNTIL = datetime.now(timezone.utc) + timedelta(seconds=retry_seconds)
-            logging.warning("Gemini quota exceeded. Entering cooldown for %ss.", retry_seconds)
-        elif "Gemini cooldown active" in error_text:
-            logging.info("Using fallback diagnosis while Gemini cooldown is active.")
-        else:
-            logging.error("AI diagnosis fallback: %s", exc)
-
+        logging.error("AI diagnosis fallback: %s", exc)
         severity = classify_severity(data.g_force)
+        report_snapshot = (
+            f"G={data.g_force:.1f}, "
+            f"A=({data.acceleration_x:.2f},{data.acceleration_y:.2f},{data.acceleration_z:.2f}), "
+            f"Giro=({data.gyro_x:.2f},{data.gyro_y:.2f},{data.gyro_z:.2f})"
+        )
         if data.language == "es":
             return AIDiagnosisResponse(
-                severity_assessment=f"Impacto detectado ({data.g_force:.1f}G), nivel {severity}.",
+                severity_assessment=(
+                    f"Impacto detectado del reporte: {report_snapshot}. "
+                    f"Clasificación automática: {severity}."
+                ),
                 probable_injuries=["Posible trauma craneal", "Contusiones", "Posibles fracturas"],
                 first_aid_steps=[
                     "No mover a la víctima",
@@ -430,7 +412,10 @@ Impact data:
                 recommendation="Asegure el área y espere servicios de emergencia.",
             )
         return AIDiagnosisResponse(
-            severity_assessment=f"Impact detected ({data.g_force:.1f}G), severity {severity}.",
+            severity_assessment=(
+                f"Impact detected from report: {report_snapshot}. "
+                f"Automatic severity classification: {severity}."
+            ),
             probable_injuries=["Possible head trauma", "Contusions", "Possible fractures"],
             first_aid_steps=[
                 "Do not move the victim",
