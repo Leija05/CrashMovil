@@ -24,6 +24,7 @@ export default function SettingsScreen() {
     updateSettings,
     isSimulationMode,
     setSimulationMode,
+    user,
   } = useCrashStore();
   const isDark = settings.theme === 'dark';
   
@@ -32,7 +33,9 @@ export default function SettingsScreen() {
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
       updateSettings(updates);
-      await settingsApi.update(updates);
+      if (user) {
+        await settingsApi.update(updates);
+      }
     } catch (error) {
       console.error('Error updating settings:', error);
     }

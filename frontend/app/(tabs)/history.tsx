@@ -17,21 +17,26 @@ import { impactsApi } from '../../src/services/api';
 export default function HistoryScreen() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { impacts, setImpacts, settings } = useCrashStore();
+  const { impacts, setImpacts, settings, user } = useCrashStore();
   const isDark = settings.theme === 'dark';
   
   const [refreshing, setRefreshing] = useState(false);
   
   useEffect(() => {
-    loadImpacts();
-  }, []);
+    if (user) {
+      loadImpacts();
+    } else {
+      setImpacts([]);
+    }
+  }, [user]);
   
   const loadImpacts = async () => {
+    if (!user) return;
     try {
       const response = await impactsApi.getAll();
       setImpacts(response.data);
     } catch (error) {
-      console.error('Error loading impacts:', error);
+      console.log('Impacts unavailable without authentication');
     }
   };
   
@@ -177,7 +182,16 @@ export default function HistoryScreen() {
         </Text>
       </View>
       
-      {impacts.length === 0 ? (
+      {!user ? (
+        <View style={styles.emptyState}>
+          <Ionicons name="lock-closed-outline" size={60} color="#444" />
+          <Text style={styles.emptyText}>
+            {settings.language === 'es'
+              ? 'Inicia sesión en Perfil para ver el historial.'
+              : 'Sign in from Profile to view history.'}
+          </Text>
+        </View>
+      ) : impacts.length === 0 ? (
         <View style={styles.emptyState}>
           <Ionicons name="analytics-outline" size={60} color="#444" />
           <Text style={styles.emptyText}>{t('noImpacts')}</Text>

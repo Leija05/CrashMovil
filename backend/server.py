@@ -7,11 +7,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import google.generativeai as genai
 import jwt
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from google import genai
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
@@ -33,11 +33,15 @@ app = FastAPI(
 )
 api_router = APIRouter(prefix="/api")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# NOTE:
+# bcrypt + passlib is failing on some Python 3.14 environments (as reported by users),
+# so we use pbkdf2_sha256 to keep password hashing stable and portable.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+GEMINI_COOLDOWN_UNTIL: Optional[datetime] = None
 
 # ==================== MODELS ====================
 
@@ -228,9 +232,9 @@ def classify_severity(g_force: float) -> str:
         return "high"
     return "critical"
 
+
 def hash_password(password: str) -> str:
-    # Bcrypt has a 72-character limit. We truncate here to prevent ValueErrors.
-    return pwd_context.hash(password[:72])
+    return pwd_context.hash(password)
 
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
@@ -342,13 +346,19 @@ async def dispatch_emergency_alerts(
 
 
 async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
+    global GEMINI_COOLDOWN_UNTIL
+
     try:
+        if GEMINI_COOLDOWN_UNTIL and datetime.now(timezone.utc) < GEMINI_COOLDOWN_UNTIL:
+            remaining = int((GEMINI_COOLDOWN_UNTIL - datetime.now(timezone.utc)).total_seconds())
+            logging.warning("Skipping Gemini call due to active cooldown (%ss remaining)", max(remaining, 0))
+            raise RuntimeError("Gemini cooldown active")
+
         api_key = os.getenv("EMERGENT_LLM_KEY")
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
 
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("models/gemini-2.5-flash")
+        client = genai.Client(api_key=api_key)
 
         severity = classify_severity(data.g_force)
         lang = "Spanish" if data.language == "es" else "English"
@@ -375,15 +385,36 @@ Impact data:
 - medical_conditions={data.medical_conditions}
 - severity={severity}
 """
-        response = model.generate_content(prompt)
-        response_text = response.text
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=prompt,
+        )
+        response_text = response.text or ""
         json_match = re.search(r"\{[\s\S]*\}", response_text)
         if not json_match:
             raise ValueError("No se encontró JSON válido en la respuesta")
         diagnosis_data = json.loads(json_match.group())
+        GEMINI_COOLDOWN_UNTIL = None
         return AIDiagnosisResponse(**diagnosis_data)
     except Exception as exc:
-        logging.error("AI diagnosis fallback: %s", exc)
+        error_text = str(exc)
+        if "429" in error_text or "RESOURCE_EXHAUSTED" in error_text:
+            retry_seconds = 60
+            retry_match = re.search(r"retry in ([0-9]+(?:\\.[0-9]+)?)s", error_text, re.IGNORECASE)
+            if retry_match:
+                retry_seconds = int(float(retry_match.group(1)))
+            else:
+                delay_match = re.search(r"retryDelay['\"]?:\\s*'?(\\d+)s", error_text, re.IGNORECASE)
+                if delay_match:
+                    retry_seconds = int(delay_match.group(1))
+
+            GEMINI_COOLDOWN_UNTIL = datetime.now(timezone.utc) + timedelta(seconds=retry_seconds)
+            logging.warning("Gemini quota exceeded. Entering cooldown for %ss.", retry_seconds)
+        elif "Gemini cooldown active" in error_text:
+            logging.info("Using fallback diagnosis while Gemini cooldown is active.")
+        else:
+            logging.error("AI diagnosis fallback: %s", exc)
+
         severity = classify_severity(data.g_force)
         if data.language == "es":
             return AIDiagnosisResponse(
