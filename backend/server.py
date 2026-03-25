@@ -33,7 +33,10 @@ app = FastAPI(
 )
 api_router = APIRouter(prefix="/api")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# NOTE:
+# bcrypt + passlib is failing on some Python 3.14 environments (as reported by users),
+# so we use pbkdf2_sha256 to keep password hashing stable and portable.
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
