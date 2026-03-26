@@ -129,7 +129,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     
     // Message dispatch is backend-driven. Here we only reflect UI status.
     if (settings.sms_enabled && contacts.length > 0 && impact) {
-      setSmsSent(true);
+      setSmsSent((impact.alerts_dispatched ?? 0) > 0);
     }
     
     // Auto call primary contact after 3 seconds
@@ -271,8 +271,16 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
                 />
                 <Text style={[styles.smsStatusText, { color: smsSent ? "#4CAF50" : "#FF9800" }]}>
                   {settings.language === 'es' 
-                    ? (smsSent ? 'Alerta enviada desde el backend a contactos de emergencia' : 'Despachando alerta...')
-                    : (smsSent ? 'Alert dispatched from backend to emergency contacts' : 'Dispatching alert...')}
+                    ? (
+                      smsSent
+                        ? 'Alerta enviada desde el backend a contactos de emergencia'
+                        : 'No se pudo confirmar envío automático. Revisa configuración de WhatsApp Cloud API y contactos verificados.'
+                    )
+                    : (
+                      smsSent
+                        ? 'Alert dispatched from backend to emergency contacts'
+                        : 'Automatic dispatch could not be confirmed. Check WhatsApp Cloud API config and verified contacts.'
+                    )}
                 </Text>
               </View>
               
