@@ -1,9 +1,10 @@
 import axios from 'axios';
 
-const API_URL = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://device-crash-tool.preview.emergentagent.com';
+const rawBackendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || 'https://device-crash-tool.preview.emergentagent.com';
+const normalizedBackendUrl = rawBackendUrl.replace(/\/+$/, '').replace(/\/api$/, '');
 
 const api = axios.create({
-  baseURL: `${API_URL}/api`,
+   baseURL: `${normalizedBackendUrl}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -22,6 +23,25 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const requestConfig = error?.config as (typeof error.config & { __retriedWithoutApi?: boolean }) | undefined;
+
+    if (error?.response?.status === 404 && requestConfig && !requestConfig.__retriedWithoutApi) {
+      const originalBaseUrl = requestConfig.baseURL || '';
+
+      if (originalBaseUrl.endsWith('/api')) {
+        requestConfig.__retriedWithoutApi = true;
+        requestConfig.baseURL = originalBaseUrl.slice(0, -4);
+        return api.request(requestConfig);
+      }
+    }
+
+    return Promise.reject(error);
+  },
+);
 
 // Auth
 export const authApi = {
