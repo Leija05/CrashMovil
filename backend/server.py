@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import jwt
+import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from google import genai
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -38,6 +39,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "mi_token_secreto_2026_crash").strip()
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v22.0").strip()
 
 # ==================== MODELS ====================
 
@@ -211,6 +216,11 @@ class AlertDispatchResult(BaseModel):
     status: str
 
 
+class WhatsAppTestMessageRequest(BaseModel):
+    to: str
+    body: str = Field(min_length=1, max_length=1024)
+
+
 # ==================== HELPERS ====================
 
 
@@ -291,6 +301,51 @@ def integration_provider() -> str:
     return "mock"
 
 
+def is_whatsapp_ready() -> bool:
+    return bool(WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID)
+
+
+def normalize_phone_number(phone: str) -> str:
+    return re.sub(r"[^\d]", "", phone)
+
+
+async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
+    if not is_whatsapp_ready():
+        raise ValueError(
+            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
+        )
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": normalize_phone_number(to_phone),
+        "type": "text",
+        "text": {"body": message[:1024]},
+    }
+    endpoint = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        response = await client_http.post(endpoint, headers=headers, json=payload)
+
+    if response.status_code >= 400:
+        logging.error("WhatsApp Cloud API error (%s): %s", response.status_code, response.text)
+        raise HTTPException(status_code=502, detail="Error enviando mensaje por WhatsApp Cloud API")
+
+    response_data = response.json()
+    message_id = (
+        response_data.get("messages", [{}])[0].get("id")
+        if isinstance(response_data.get("messages"), list)
+        else None
+    )
+    return message_id or "sent"
+
+
 async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
     provider = integration_provider()
     logging.info(
@@ -301,6 +356,11 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
         contact.phone,
     )
     logging.info("Alert content preview: %s", message)
+
+    if channel == "whatsapp" and is_whatsapp_ready():
+        message_id = await send_whatsapp_cloud_message(contact.phone, message)
+        return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
+
     return AlertDispatchResult(contact_id=contact.id, channel=channel, status="sent")
 
 
@@ -578,6 +638,16 @@ async def confirm_contact_opt_in(payload: ContactVerificationRequest) -> Dict[st
     return {"message": "Contact verified"}
 
 
+@api_router.post("/integrations/whatsapp/test")
+async def send_whatsapp_test_message(
+    payload: WhatsAppTestMessageRequest,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    _ = current_user
+    message_id = await send_whatsapp_cloud_message(payload.to, payload.body)
+    return {"status": "sent", "message_id": message_id}
+
+
 @api_router.post("/webhooks/whatsapp")
 async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
     body_text = str(payload.get("Body", "")).strip().upper()
@@ -587,6 +657,60 @@ async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
             {"phone": from_phone},
             {"$set": {"verified": True, "opt_in_status": "verified"}},
         )
+    return {"status": "ok"}
+
+
+@app.get("/webhook/whatsapp")
+async def verify_whatsapp_webhook(request: Request) -> Response:
+    mode = request.query_params.get("hub.mode")
+    token = (request.query_params.get("hub.verify_token") or "").strip()
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN and challenge:
+        return Response(content=challenge, status_code=200, media_type="text/plain")
+
+    if token == "WEBHOOK_VERIFY_TOKEN":
+        logging.warning(
+            "Webhook verification failed because literal token name was provided. "
+            "Use the actual token value, not the env var name."
+        )
+    else:
+        logging.warning("Webhook verification failed. mode=%s token_provided=%s", mode, bool(token))
+
+    raise HTTPException(status_code=403, detail="Invalid verify token")
+
+
+@app.post("/webhook/whatsapp")
+async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
+    logging.info("WhatsApp webhook event received: %s", payload)
+
+    try:
+        entries = payload.get("entry", [])
+        for entry in entries:
+            changes = entry.get("changes", [])
+            for change in changes:
+                value = change.get("value", {})
+                messages = value.get("messages", [])
+                for message in messages:
+                    from_phone = normalize_phone_number(str(message.get("from", "")))
+                    body_text = (
+                        message.get("text", {}).get("body", "")
+                        if isinstance(message.get("text"), dict)
+                        else ""
+                    )
+                    if body_text.strip().upper() == "ACEPTO" and from_phone:
+                        await db.emergency_contacts.update_one(
+                            {"phone": {"$in": [from_phone, f"+{from_phone}"]}},
+                            {"$set": {"verified": True, "opt_in_status": "verified"}},
+                        )
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Error processing WhatsApp webhook payload: %s", exc)
+
+    return {"status": "ok"}
+
+
+@app.get("/health")
+async def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
