@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   RefreshControl,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,6 +24,7 @@ export default function ContactsScreen() {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingContact, setEditingContact] = useState<EmergencyContact | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [verificationTokens, setVerificationTokens] = useState<Record<string, string>>({});
   
   useEffect(() => {
     if (user) {
@@ -65,6 +67,12 @@ export default function ContactsScreen() {
         await contactsApi.update(editingContact.id, contactData);
       } else {
         await contactsApi.create(contactData);
+        Alert.alert(
+          settings.language === 'es' ? 'Token enviado' : 'Token sent',
+          settings.language === 'es'
+            ? 'Se envió un token por WhatsApp al contacto. Escríbelo en Confirmación para activarlo.'
+            : 'A WhatsApp token was sent to this contact. Enter it in Confirmation to activate alerts.'
+        );
       }
       await loadContacts();
     } catch (error) {
@@ -72,6 +80,38 @@ export default function ContactsScreen() {
       Alert.alert(
         settings.language === 'es' ? 'Error' : 'Error',
         settings.language === 'es' ? 'No se pudo guardar el contacto' : 'Could not save contact'
+      );
+    }
+  };
+
+  const handleVerifyToken = async (contact: EmergencyContact) => {
+    const token = (verificationTokens[contact.id] || '').trim().toUpperCase();
+    if (!token) {
+      Alert.alert(
+        settings.language === 'es' ? 'Falta token' : 'Missing token',
+        settings.language === 'es'
+          ? 'Ingresa el token recibido por WhatsApp.'
+          : 'Enter the token received on WhatsApp.'
+      );
+      return;
+    }
+    try {
+      await contactsApi.verifyToken(contact.id, token);
+      setVerificationTokens((prev) => ({ ...prev, [contact.id]: '' }));
+      await loadContacts();
+      Alert.alert(
+        settings.language === 'es' ? 'Confirmado' : 'Confirmed',
+        settings.language === 'es'
+          ? 'El contacto quedó confirmado para alertas automáticas.'
+          : 'Contact has been confirmed for automatic alerts.'
+      );
+    } catch (error) {
+      console.error('Error verifying token:', error);
+      Alert.alert(
+        settings.language === 'es' ? 'Token inválido' : 'Invalid token',
+        settings.language === 'es'
+          ? 'El token no coincide con el enviado por WhatsApp.'
+          : 'The token does not match the one sent over WhatsApp.'
       );
     }
   };
@@ -120,6 +160,45 @@ export default function ContactsScreen() {
         </Text>
         <Text style={styles.contactPhone}>{item.phone}</Text>
         <Text style={styles.contactRelationship}>{t(item.relationship)}</Text>
+        <View style={styles.confirmationRow}>
+          <Text style={[styles.confirmationLabel, isDark ? styles.textDark : styles.textLight]}>
+            {settings.language === 'es' ? 'Confirmación:' : 'Confirmation:'}
+          </Text>
+          <View
+            style={[
+              styles.confirmationDot,
+              item.verified ? styles.confirmedDot : styles.pendingDot,
+            ]}
+          />
+          <Text style={item.verified ? styles.confirmedText : styles.pendingText}>
+            {item.verified
+              ? settings.language === 'es'
+                ? 'Verificado'
+                : 'Verified'
+              : settings.language === 'es'
+                ? 'Pendiente'
+                : 'Pending'}
+          </Text>
+        </View>
+        {!item.verified && (
+          <View style={styles.verifyInputRow}>
+            <TextInput
+              style={[styles.verifyInput, isDark ? styles.verifyInputDark : styles.verifyInputLight]}
+              value={verificationTokens[item.id] || ''}
+              onChangeText={(text) =>
+                setVerificationTokens((prev) => ({ ...prev, [item.id]: text }))
+              }
+              placeholder={settings.language === 'es' ? 'Token' : 'Token'}
+              placeholderTextColor="#888"
+              autoCapitalize="characters"
+            />
+            <TouchableOpacity style={styles.verifyButton} onPress={() => handleVerifyToken(item)}>
+              <Text style={styles.verifyButtonText}>
+                {settings.language === 'es' ? 'Confirmar' : 'Confirm'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
       
       <TouchableOpacity
@@ -270,6 +349,69 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#00d9ff',
     marginTop: 2,
+  },
+  confirmationRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+    gap: 6,
+  },
+  confirmationLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  confirmationDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  confirmedDot: {
+    backgroundColor: '#22c55e',
+  },
+  pendingDot: {
+    backgroundColor: '#f97316',
+  },
+  confirmedText: {
+    color: '#22c55e',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  pendingText: {
+    color: '#f97316',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  verifyInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  verifyInput: {
+    flex: 1,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+  },
+  verifyInputDark: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    color: '#fff',
+  },
+  verifyInputLight: {
+    backgroundColor: 'rgba(0,0,0,0.05)',
+    color: '#000',
+  },
+  verifyButton: {
+    backgroundColor: '#22c55e',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  verifyButtonText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
   },
   deleteButton: {
     padding: 10,
