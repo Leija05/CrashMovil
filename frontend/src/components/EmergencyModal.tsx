@@ -259,7 +259,11 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
             <ScrollView style={styles.diagnosisScrollView} contentContainerStyle={styles.diagnosisContainer}>
               <View style={styles.alertSentBadge}>
                 <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-                <Text style={styles.alertSentText}>{t('alertSent')}</Text>
+                <Text style={styles.alertSentText}>
+                  {settings.language === 'es'
+                    ? (smsSent ? 'Alerta enviada' : 'Alerta no enviada')
+                    : (smsSent ? 'Alert sent' : 'Alert not sent')}
+                </Text>
               </View>
               
               {/* SMS Status */}

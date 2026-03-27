@@ -668,6 +668,25 @@ async def send_whatsapp_test_message(
     return {"status": "sent", "message_id": message_id}
 
 
+@api_router.get("/integrations/whatsapp/debug")
+async def whatsapp_debug_info(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    settings = await get_or_create_settings(current_user.id)
+    total_contacts = await db.emergency_contacts.count_documents({"owner_id": current_user.id})
+    verified_contacts = await db.emergency_contacts.count_documents(
+        {"owner_id": current_user.id, "verified": True, "opt_in_status": "verified"}
+    )
+    return {
+        "whatsapp_ready": is_whatsapp_ready(),
+        "has_access_token": bool(WHATSAPP_ACCESS_TOKEN),
+        "has_phone_number_id": bool(WHATSAPP_PHONE_NUMBER_ID),
+        "message_type": settings.message_type,
+        "sms_enabled": settings.sms_enabled,
+        "impact_threshold": settings.impact_threshold,
+        "total_contacts": total_contacts,
+        "verified_contacts": verified_contacts,
+    }
+
+
 @api_router.post("/webhooks/whatsapp")
 async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
     body_text = str(payload.get("Body", "")).strip().upper()
