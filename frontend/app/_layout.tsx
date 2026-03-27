@@ -30,9 +30,12 @@ export default function RootLayout() {
           i18n.changeLanguage(response.data.language);
         }
       } catch (error) {
-        await AsyncStorage.removeItem('auth_token');
-        setAuthToken(null);
-        setAuthSession(null, null);
+        const statusCode = (error as any)?.response?.status;
+        if (statusCode === 401) {
+          await AsyncStorage.removeItem('auth_token');
+          setAuthToken(null);
+          setAuthSession(null, null);
+        }
       }
     };
     bootstrapSession();

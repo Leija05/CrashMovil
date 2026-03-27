@@ -24,6 +24,14 @@ export default function DiagnosisScreen() {
   const [diagnosis, setDiagnosis] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const safeNumber = (value: unknown, fallback = 0) => {
+    const parsed = parseFloat(String(value ?? ''));
+    return Number.isFinite(parsed) ? parsed : fallback;
+  };
+
+  const severityParam = typeof params.severity === 'string' ? params.severity : 'low';
+  const gForceValue = safeNumber(params.gForce);
   
   useEffect(() => {
     fetchDiagnosis();
@@ -61,13 +69,13 @@ export default function DiagnosisScreen() {
       }
 
       const response = await diagnosisApi.get({
-        g_force: parseFloat(params.gForce as string),
-        acceleration_x: parseFloat(params.accelerationX as string),
-        acceleration_y: parseFloat(params.accelerationY as string),
-        acceleration_z: parseFloat(params.accelerationZ as string),
-        gyro_x: parseFloat(params.gyroX as string),
-        gyro_y: parseFloat(params.gyroY as string),
-        gyro_z: parseFloat(params.gyroZ as string),
+        g_force: gForceValue,
+        acceleration_x: safeNumber(params.accelerationX),
+        acceleration_y: safeNumber(params.accelerationY),
+        acceleration_z: safeNumber(params.accelerationZ, 1),
+        gyro_x: safeNumber(params.gyroX),
+        gyro_y: safeNumber(params.gyroY),
+        gyro_z: safeNumber(params.gyroZ),
         blood_type: profile?.blood_type,
         allergies: profile?.allergies,
         medical_conditions: profile?.medical_conditions,
@@ -109,13 +117,13 @@ export default function DiagnosisScreen() {
       </View>
       
       {/* Impact Info */}
-      <View style={[styles.impactInfo, { borderColor: getSeverityColor(params.severity as string) }]}>
+      <View style={[styles.impactInfo, { borderColor: getSeverityColor(severityParam) }]}>
         <Text style={styles.impactLabel}>{t('gForce')}</Text>
-        <Text style={[styles.impactValue, { color: getSeverityColor(params.severity as string) }]}>
-          {parseFloat(params.gForce as string).toFixed(1)}G
+        <Text style={[styles.impactValue, { color: getSeverityColor(severityParam) }]}>
+          {gForceValue.toFixed(1)}G
         </Text>
-        <Text style={[styles.impactSeverity, { color: getSeverityColor(params.severity as string) }]}>
-          {t(params.severity as string).toUpperCase()}
+        <Text style={[styles.impactSeverity, { color: getSeverityColor(severityParam) }]}>
+          {t(severityParam).toUpperCase()}
         </Text>
       </View>
       
