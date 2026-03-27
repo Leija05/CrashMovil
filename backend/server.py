@@ -39,10 +39,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
-WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "").strip()
-WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
-WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
-WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v22.0").strip()
+WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN").strip()
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN").strip()
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID").strip()
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION").strip()
 
 # ==================== MODELS ====================
 
@@ -357,9 +357,29 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
     )
     logging.info("Alert content preview: %s", message)
 
-    if channel == "whatsapp" and is_whatsapp_ready():
-        message_id = await send_whatsapp_cloud_message(contact.phone, message)
-        return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
+    if channel == "whatsapp":
+        if not is_whatsapp_ready():
+            logging.warning(
+                "WhatsApp alert skipped for %s (%s): missing Cloud API configuration",
+                contact.name,
+                contact.phone,
+            )
+            return AlertDispatchResult(
+                contact_id=contact.id,
+                channel=channel,
+                status="failed:whatsapp_not_configured",
+            )
+        try:
+            message_id = await send_whatsapp_cloud_message(contact.phone, message)
+            return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
+        except HTTPException as exc:
+            logging.error(
+                "WhatsApp send failed for %s (%s): %s",
+                contact.name,
+                contact.phone,
+                exc.detail,
+            )
+            return AlertDispatchResult(contact_id=contact.id, channel=channel, status="failed:whatsapp_api_error")
 
     return AlertDispatchResult(contact_id=contact.id, channel=channel, status="sent")
 
@@ -794,7 +814,7 @@ async def create_impact(
         impact_obj.first_aid_guide = " | ".join(diagnosis.first_aid_steps)
 
         dispatch_results = await dispatch_emergency_alerts(current_user.id, impact_obj, diagnosis, settings)
-        impact_obj.alerts_dispatched = len(dispatch_results)
+        impact_obj.alerts_dispatched = sum(1 for result in dispatch_results if result.status.startswith("sent"))
 
     await db.impact_events.insert_one(impact_obj.model_dump())
     return impact_obj

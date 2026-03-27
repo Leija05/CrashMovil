@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,14 +9,12 @@ import {
   Animated,
   Dimensions,
   Alert,
-  Platform,
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useCrashStore, ImpactEvent } from '../store/crashStore';
 import { impactsApi, diagnosisApi } from '../services/api';
-import * as SMS from 'expo-sms';
 import * as Linking from 'expo-linking';
 
 const { width, height } = Dimensions.get('window');
@@ -33,7 +31,6 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     settings,
     contacts,
     profile,
-    currentLocation,
     setEmergencyActive,
     user,
   } = useCrashStore();
@@ -119,7 +116,8 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
   };
   
   // ============================================================
-  // AUTOMATIC MESSAGE SENDING - Sends SMS or WhatsApp when countdown reaches 0
+  // ALERT DISPATCH STATUS
+  // NOTE: real SMS/WhatsApp dispatch is handled by backend when impact is created.
   // ============================================================
   const sendEmergencyAlert = async () => {
     setAlertSent(true);
@@ -129,48 +127,9 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     // Get AI diagnosis
     fetchDiagnosis();
     
-    // AUTOMATIC MESSAGE SENDING to all emergency contacts
+    // Message dispatch is backend-driven. Here we only reflect UI status.
     if (settings.sms_enabled && contacts.length > 0 && impact) {
-      const locationText = currentLocation
-        ? `\nUbicacion GPS: https://maps.google.com/?q=${currentLocation.latitude},${currentLocation.longitude}`
-        : '';
-      
-      const message = settings.language === 'es'
-        ? `ALERTA DE EMERGENCIA C.R.A.S.H.\n\nSe ha detectado un ACCIDENTE de motocicleta.\n\nFuerza del impacto: ${impact.g_force.toFixed(1)}G\nSeveridad: ${impact.severity.toUpperCase()}${locationText}\n\nPor favor contacte INMEDIATAMENTE a los servicios de emergencia (911) y acuda a la ubicacion indicada.\n\nEste mensaje fue enviado automaticamente por el sistema C.R.A.S.H.`
-        : `C.R.A.S.H. EMERGENCY ALERT\n\nA motorcycle ACCIDENT has been detected.\n\nImpact force: ${impact.g_force.toFixed(1)}G\nSeverity: ${impact.severity.toUpperCase()}${locationText}\n\nPlease IMMEDIATELY contact emergency services (911) and go to the indicated location.\n\nThis message was sent automatically by the C.R.A.S.H. system.`;
-      
-      // Check message type preference (SMS or WhatsApp)
-      const messageType = settings.message_type || 'sms';
-      
-      if (messageType === 'whatsapp') {
-        // Send via WhatsApp
-        try {
-          const primaryContact = contacts.find(c => c.is_primary) || contacts[0];
-          if (primaryContact) {
-            // Clean phone number (remove spaces and special chars)
-            const cleanPhone = primaryContact.phone.replace(/[^0-9+]/g, '').replace('+', '');
-            const whatsappUrl = `whatsapp://send?phone=${cleanPhone}&text=${encodeURIComponent(message)}`;
-            
-            const canOpen = await Linking.canOpenURL(whatsappUrl);
-            if (canOpen) {
-              await Linking.openURL(whatsappUrl);
-              setSmsSent(true);
-            } else {
-              // Fallback to web WhatsApp
-              const webWhatsappUrl = `https://wa.me/${cleanPhone}?text=${encodeURIComponent(message)}`;
-              await Linking.openURL(webWhatsappUrl);
-              setSmsSent(true);
-            }
-          }
-        } catch (error) {
-          console.log('WhatsApp error:', error);
-          // Fallback to SMS
-          await sendSMS(contacts, message);
-        }
-      } else {
-        // Send via SMS
-        await sendSMS(contacts, message);
-      }
+      setSmsSent((impact.alerts_dispatched ?? 0) > 0);
     }
     
     // Auto call primary contact after 3 seconds
@@ -186,25 +145,8 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     }
   };
   
-  // Helper function to send SMS
-  const sendSMS = async (contactsList: typeof contacts, message: string) => {
-    try {
-      const isAvailable = await SMS.isAvailableAsync();
-      if (isAvailable) {
-        const phones = contactsList.map(c => c.phone);
-        const { result } = await SMS.sendSMSAsync(phones, message);
-        if (result === 'sent' || result === 'unknown') {
-          setSmsSent(true);
-        }
-      } else {
-        console.log('SMS not available on this device');
-      }
-    } catch (error) {
-      console.log('SMS error:', error);
-    }
-  };
   // ============================================================
-  // END AUTOMATIC MESSAGE SENDING
+  // END ALERT DISPATCH STATUS
   // ============================================================
   
   const fetchDiagnosis = async () => {
@@ -329,8 +271,16 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
                 />
                 <Text style={[styles.smsStatusText, { color: smsSent ? "#4CAF50" : "#FF9800" }]}>
                   {settings.language === 'es' 
-                    ? (smsSent ? 'SMS enviado a contactos de emergencia' : 'Enviando SMS...')
-                    : (smsSent ? 'SMS sent to emergency contacts' : 'Sending SMS...')}
+                    ? (
+                      smsSent
+                        ? 'Alerta enviada desde el backend a contactos de emergencia'
+                        : 'No se pudo confirmar envío automático. Revisa configuración de WhatsApp Cloud API y contactos verificados.'
+                    )
+                    : (
+                      smsSent
+                        ? 'Alert dispatched from backend to emergency contacts'
+                        : 'Automatic dispatch could not be confirmed. Check WhatsApp Cloud API config and verified contacts.'
+                    )}
                 </Text>
               </View>
               
