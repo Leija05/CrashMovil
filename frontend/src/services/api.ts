@@ -62,6 +62,8 @@ export const contactsApi = {
     api.put(`/contacts/${id}`, data),
   delete: (id: string) => api.delete(`/contacts/${id}`),
   confirmOptIn: (data: { token: string; response_text: string }) => api.post('/contacts/opt-in/confirm', data),
+  verifyToken: (contactId: string, token: string) =>
+    api.post(`/contacts/${contactId}/verify-token`, { token }),
 };
 
 // Impact Events

@@ -120,6 +120,10 @@ class ContactVerificationRequest(BaseModel):
     response_text: str
 
 
+class ContactTokenVerificationInput(BaseModel):
+    token: str
+
+
 class ImpactEvent(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     owner_id: str
@@ -715,6 +719,21 @@ async def create_contact(
     )
     await db.emergency_contacts.insert_one(contact_obj.model_dump())
     logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
+    try:
+        verification_message = (
+            "🔐 Verificación de contacto C.R.A.S.H.\n"
+            f"Código: {token}\n"
+            "Comparte este código con el titular de la cuenta para activar alertas de emergencia."
+        )
+        await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
+        logging.info("Verification token sent to contact %s (%s)", contact_obj.name, contact_obj.phone)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "Could not send verification token to %s (%s): %s",
+            contact_obj.name,
+            contact_obj.phone,
+            exc,
+        )
     return contact_obj
 
 
@@ -762,6 +781,31 @@ async def confirm_contact_opt_in(payload: ContactVerificationRequest) -> Dict[st
         raise HTTPException(status_code=404, detail="Invalid token")
 
     return {"message": "Contact verified"}
+
+
+@api_router.post("/contacts/{contact_id}/verify-token")
+async def verify_contact_token_from_owner(
+    contact_id: str,
+    payload: ContactTokenVerificationInput,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    token_input = payload.token.strip().upper()
+    if not token_input:
+        raise HTTPException(status_code=400, detail="Token requerido")
+
+    contact = await db.emergency_contacts.find_one({"id": contact_id, "owner_id": current_user.id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    saved_token = str(contact.get("opt_in_token", "")).strip().upper()
+    if token_input != saved_token:
+        raise HTTPException(status_code=400, detail="Token inválido")
+
+    await db.emergency_contacts.update_one(
+        {"id": contact_id, "owner_id": current_user.id},
+        {"$set": {"verified": True, "opt_in_status": "verified"}},
+    )
+    return {"message": "Contacto confirmado"}
 
 
 @api_router.post("/integrations/whatsapp/test")

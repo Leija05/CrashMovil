@@ -6,6 +6,8 @@ export interface EmergencyContact {
   phone: string;
   relationship: string;
   is_primary: boolean;
+  verified?: boolean;
+  opt_in_status?: 'pending' | 'verified' | 'revoked';
 }
 
 export interface ImpactEvent {
