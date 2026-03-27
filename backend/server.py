@@ -51,6 +51,7 @@ WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H
     "yes",
 }
 FALLBACK_REENGAGEMENT_IDS: set[str] = set()
+MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
 
 # ==================== MODELS ====================
 
@@ -353,25 +354,6 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
     }
 
     async with httpx.AsyncClient(timeout=20.0) as client_http:
-        if WHATSAPP_TEMPLATE_NAME:
-            template_payload = {
-                "messaging_product": "whatsapp",
-                "to": normalized_phone,
-                "type": "template",
-                "template": {
-                    "name": WHATSAPP_TEMPLATE_NAME,
-                    "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
-                },
-            }
-            template_response = await client_http.post(endpoint, headers=headers, json=template_payload)
-            if template_response.status_code >= 400:
-                logging.error(
-                    "WhatsApp template send error (%s): %s",
-                    template_response.status_code,
-                    template_response.text,
-                )
-            else:
-                logging.info("WhatsApp template sent before summary message to %s", normalized_phone)
         response = await client_http.post(endpoint, headers=headers, json=payload)
 
     if response.status_code >= 400:
@@ -384,6 +366,8 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
         if isinstance(response_data.get("messages"), list)
         else None
     )
+    if message_id:
+        MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
     return message_id or "sent"
 
 
@@ -430,6 +414,8 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         if isinstance(response_data.get("messages"), list)
         else None
     )
+    if message_id:
+        MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
     return message_id or "sent"
 
 
@@ -492,21 +478,14 @@ async def dispatch_emergency_alerts(
         {"owner_id": owner_id, "verified": True, "opt_in_status": "verified"}
     ).to_list(50)
 
-    dispatch_contacts = verified_contacts
-    if not dispatch_contacts:
+    if not verified_contacts:
         total_contacts = await db.emergency_contacts.count_documents({"owner_id": owner_id})
-        if total_contacts == 0:
-            logging.warning(
-                "No se despacharon alertas: no hay contactos para owner_id=%s",
-                owner_id,
-            )
-            return []
-        dispatch_contacts = await db.emergency_contacts.find({"owner_id": owner_id}).to_list(50)
         logging.warning(
-            "No hay contactos verificados para owner_id=%s. Se enviará a %s contactos registrados.",
+            "No se enviaron alertas para owner_id=%s: no hay contactos confirmados (total_registrados=%s).",
             owner_id,
-            len(dispatch_contacts),
+            total_contacts,
         )
+        return []
 
     message = format_alert_message(impact, diagnosis)
     results: List[AlertDispatchResult] = []
@@ -518,10 +497,10 @@ async def dispatch_emergency_alerts(
         settings.message_type,
         message_channel_enabled,
         settings.auto_call_enabled,
-        len(dispatch_contacts),
+        len(verified_contacts),
     )
 
-    for doc in dispatch_contacts:
+    for doc in verified_contacts:
         contact = EmergencyContact(**sanitize_doc(doc))
         if message_channel_enabled:
             results.append(await send_contact_alert(contact, message, settings.message_type))
@@ -720,11 +699,7 @@ async def create_contact(
     await db.emergency_contacts.insert_one(contact_obj.model_dump())
     logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
     try:
-        verification_message = (
-            "🔐 Verificación de contacto C.R.A.S.H.\n"
-            f"Código: {token}\n"
-            "Comparte este código con el titular de la cuenta para activar alertas de emergencia."
-        )
+        verification_message = f"Hola, Aquí esta el TOKEN de VERIFICACION para CRASH: {token}"
         await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
         logging.info("Verification token sent to contact %s (%s)", contact_obj.name, contact_obj.phone)
     except Exception as exc:  # noqa: BLE001
@@ -903,28 +878,29 @@ async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
                     status_value = str(status_obj.get("status", "")).lower()
                     status_id = str(status_obj.get("id", "")).strip()
                     recipient_id = normalize_phone_number(str(status_obj.get("recipient_id", "")))
+                    original_phone = MESSAGE_ID_TO_PHONE.get(status_id, recipient_id)
                     errors = status_obj.get("errors", []) if isinstance(status_obj.get("errors"), list) else []
                     error_codes = [str(err.get("code")) for err in errors if isinstance(err, dict)]
                     is_reengagement_failure = status_value == "failed" and "131047" in error_codes
                     if (
                         is_reengagement_failure
-                        and recipient_id
+                        and original_phone
                         and WHATSAPP_TEMPLATE_FALLBACK_ON_24H
                         and WHATSAPP_TEMPLATE_NAME
                         and status_id not in FALLBACK_REENGAGEMENT_IDS
                     ):
                         FALLBACK_REENGAGEMENT_IDS.add(status_id)
                         try:
-                            fallback_message_id = await send_whatsapp_template_message(recipient_id)
+                            fallback_message_id = await send_whatsapp_template_message(original_phone)
                             logging.info(
                                 "Re-engagement fallback template sent to %s with message_id=%s",
-                                recipient_id,
+                                original_phone,
                                 fallback_message_id,
                             )
                         except Exception as fallback_exc:  # noqa: BLE001
                             logging.exception(
                                 "Failed to send re-engagement fallback template to %s: %s",
-                                recipient_id,
+                                original_phone,
                                 fallback_exc,
                             )
     except Exception as exc:  # noqa: BLE001
