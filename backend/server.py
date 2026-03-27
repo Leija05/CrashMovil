@@ -23,9 +23,9 @@ load_dotenv(ROOT_DIR / ".env")
 
 # ==================== APP + DB ====================
 
-mongo_url = os.getenv("MONGO_URL", "mongodb://localhost:27017")
+mongo_url = os.getenv("MONGO_URL")
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.getenv("DB_NAME", "crash_database")]
+db = client[os.getenv("DB_NAME")]
 
 app = FastAPI(
     title="C.R.A.S.H. API",
