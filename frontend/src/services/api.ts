@@ -43,6 +43,19 @@ api.interceptors.response.use(
   },
 );
 
+export const getApiErrorMessage = (error: any, fallback: string): string => {
+  if (error?.response?.data?.detail?.message) {
+    return error.response.data.detail.message;
+  }
+  if (typeof error?.response?.data?.detail === 'string') {
+    return error.response.data.detail;
+  }
+  if (typeof error?.message === 'string' && error.message.trim()) {
+    return error.message;
+  }
+  return fallback;
+};
+
 // Auth
 export const authApi = {
   register: (data: { email: string; password: string; full_name?: string }) =>
