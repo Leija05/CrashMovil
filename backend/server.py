@@ -45,6 +45,12 @@ WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v25.0").strip()
 WHATSAPP_TEMPLATE_NAME = os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip()
 WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE", "en_US").strip()
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+FALLBACK_REENGAGEMENT_IDS: set[str] = set()
 
 # ==================== MODELS ====================
 
@@ -368,6 +374,52 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
         logging.error("WhatsApp Cloud API error (%s): %s", response.status_code, response.text)
         raise HTTPException(status_code=502, detail="Error enviando mensaje por WhatsApp Cloud API")
 
+    response_data = response.json()
+    message_id = (
+        response_data.get("messages", [{}])[0].get("id")
+        if isinstance(response_data.get("messages"), list)
+        else None
+    )
+    return message_id or "sent"
+
+
+async def send_whatsapp_template_message(to_phone: str) -> str:
+    if not is_whatsapp_ready():
+        raise ValueError(
+            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
+        )
+    if not WHATSAPP_TEMPLATE_NAME:
+        raise ValueError("WHATSAPP_TEMPLATE_NAME no está configurado para fallback de 24h.")
+
+    normalized_phone = normalize_phone_number(to_phone)
+    endpoint = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": normalized_phone,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_TEMPLATE_NAME,
+            "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+        },
+    }
+    logging.info(
+        "WhatsApp 24h fallback template send to=%s template=%s lang=%s",
+        normalized_phone,
+        WHATSAPP_TEMPLATE_NAME,
+        WHATSAPP_TEMPLATE_LANGUAGE,
+    )
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        response = await client_http.post(endpoint, headers=headers, json=payload)
+    if response.status_code >= 400:
+        logging.error("WhatsApp fallback template error (%s): %s", response.status_code, response.text)
+        raise HTTPException(status_code=502, detail="Error enviando template de re-engagement")
     response_data = response.json()
     message_id = (
         response_data.get("messages", [{}])[0].get("id")
@@ -737,6 +789,7 @@ async def whatsapp_debug_info(current_user: User = Depends(get_current_user)) ->
         "whatsapp_api_version": WHATSAPP_API_VERSION,
         "whatsapp_template_name": WHATSAPP_TEMPLATE_NAME or None,
         "whatsapp_template_language": WHATSAPP_TEMPLATE_LANGUAGE,
+        "whatsapp_template_fallback_on_24h": WHATSAPP_TEMPLATE_FALLBACK_ON_24H,
         "message_type": settings.message_type,
         "sms_enabled": settings.sms_enabled,
         "impact_threshold": settings.impact_threshold,
@@ -801,6 +854,35 @@ async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
                             {"phone": {"$in": [from_phone, f"+{from_phone}"]}},
                             {"$set": {"verified": True, "opt_in_status": "verified"}},
                         )
+                statuses = value.get("statuses", [])
+                for status_obj in statuses:
+                    status_value = str(status_obj.get("status", "")).lower()
+                    status_id = str(status_obj.get("id", "")).strip()
+                    recipient_id = normalize_phone_number(str(status_obj.get("recipient_id", "")))
+                    errors = status_obj.get("errors", []) if isinstance(status_obj.get("errors"), list) else []
+                    error_codes = [str(err.get("code")) for err in errors if isinstance(err, dict)]
+                    is_reengagement_failure = status_value == "failed" and "131047" in error_codes
+                    if (
+                        is_reengagement_failure
+                        and recipient_id
+                        and WHATSAPP_TEMPLATE_FALLBACK_ON_24H
+                        and WHATSAPP_TEMPLATE_NAME
+                        and status_id not in FALLBACK_REENGAGEMENT_IDS
+                    ):
+                        FALLBACK_REENGAGEMENT_IDS.add(status_id)
+                        try:
+                            fallback_message_id = await send_whatsapp_template_message(recipient_id)
+                            logging.info(
+                                "Re-engagement fallback template sent to %s with message_id=%s",
+                                recipient_id,
+                                fallback_message_id,
+                            )
+                        except Exception as fallback_exc:  # noqa: BLE001
+                            logging.exception(
+                                "Failed to send re-engagement fallback template to %s: %s",
+                                recipient_id,
+                                fallback_exc,
+                            )
     except Exception as exc:  # noqa: BLE001
         logging.exception("Error processing WhatsApp webhook payload: %s", exc)
 
