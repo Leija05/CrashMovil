@@ -23,6 +23,7 @@ export interface ImpactEvent {
   longitude?: number;
   was_false_alarm: boolean;
   ai_diagnosis?: string;
+  alerts_dispatched?: number;
 }
 
 export interface DeviceSettings {

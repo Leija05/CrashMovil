@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Dimensions,
   RefreshControl,
+  Alert,
   Animated,
   Easing,
 } from 'react-native';
@@ -220,22 +221,29 @@ export default function HomeScreen() {
     }
 
     try {
+      console.log('Creating impact in backend:', impactData);
       const response = await impactsApi.create(impactData);
       const impact = response.data;
+      console.log('Impact created in backend:', impact);
       setCurrentImpact(impact);
       setEmergencyActive(true);
       setImpacts([impact, ...impacts]);
+      if ((impact.alerts_dispatched ?? 0) === 0) {
+        Alert.alert(
+          settings.language === 'es' ? 'Sin despacho confirmado' : 'No dispatch confirmed',
+          settings.language === 'es'
+            ? 'El impacto se registró, pero no hubo envíos confirmados. Revisa /api/integrations/whatsapp/debug y los logs del backend.'
+            : 'Impact was recorded, but there were no confirmed sends. Check /api/integrations/whatsapp/debug and backend logs.'
+        );
+      }
     } catch (error) {
       console.error('Error creating impact:', error);
-      const localImpact: ImpactEvent = {
-        id: `sim-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        ...impactData,
-        severity: selectedSeverity,
-        was_false_alarm: false,
-      };
-      setCurrentImpact(localImpact);
-      setEmergencyActive(true);
+      Alert.alert(
+        settings.language === 'es' ? 'Error de conexión backend' : 'Backend connection error',
+        settings.language === 'es'
+          ? 'No se pudo registrar el impacto en el backend. Verifica EXPO_PUBLIC_BACKEND_URL y ngrok antes de simular.'
+          : 'Could not register the impact in backend. Verify EXPO_PUBLIC_BACKEND_URL and ngrok before simulating.'
+      );
     }
   };
   
