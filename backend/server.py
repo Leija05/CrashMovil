@@ -406,14 +406,30 @@ async def dispatch_emergency_alerts(
     ).to_list(50)
 
     if not verified_contacts:
+        total_contacts = await db.emergency_contacts.count_documents({"owner_id": owner_id})
+        logging.warning(
+            "No se despacharon alertas: 0 contactos verificados para owner_id=%s (total_contactos=%s)",
+            owner_id,
+            total_contacts,
+        )
         return []
 
     message = format_alert_message(impact, diagnosis)
     results: List[AlertDispatchResult] = []
+    message_channel_enabled = settings.sms_enabled or settings.message_type == "whatsapp"
+
+    logging.info(
+        "Dispatch config owner_id=%s -> message_type=%s, message_channel_enabled=%s, auto_call_enabled=%s, verified_contacts=%s",
+        owner_id,
+        settings.message_type,
+        message_channel_enabled,
+        settings.auto_call_enabled,
+        len(verified_contacts),
+    )
 
     for doc in verified_contacts:
         contact = EmergencyContact(**sanitize_doc(doc))
-        if settings.sms_enabled:
+        if message_channel_enabled:
             results.append(await send_contact_alert(contact, message, settings.message_type))
         if settings.auto_call_enabled:
             results.append(await place_automated_call(contact, message))
@@ -826,6 +842,14 @@ async def create_impact(
 
     impact_obj = ImpactEvent(owner_id=current_user.id, severity=severity, **impact.model_dump())
 
+    logging.info(
+        "Impact received owner_id=%s g_force=%.2f threshold=%.2f severity=%s",
+        current_user.id,
+        impact.g_force,
+        settings.impact_threshold,
+        severity,
+    )
+
     if impact.g_force >= settings.impact_threshold:
         diagnosis_request = AIDiagnosisRequest(**impact.model_dump(), language=settings.language)
         diagnosis = await get_ai_diagnosis(diagnosis_request)
@@ -834,6 +858,20 @@ async def create_impact(
 
         dispatch_results = await dispatch_emergency_alerts(current_user.id, impact_obj, diagnosis, settings)
         impact_obj.alerts_dispatched = sum(1 for result in dispatch_results if result.status.startswith("sent"))
+        logging.info(
+            "Impact dispatch finished owner_id=%s sent_count=%s total_results=%s statuses=%s",
+            current_user.id,
+            impact_obj.alerts_dispatched,
+            len(dispatch_results),
+            [result.status for result in dispatch_results],
+        )
+    else:
+        logging.info(
+            "Impact below threshold owner_id=%s g_force=%.2f threshold=%.2f (no dispatch)",
+            current_user.id,
+            impact.g_force,
+            settings.impact_threshold,
+        )
 
     await db.impact_events.insert_one(impact_obj.model_dump())
     return impact_obj
