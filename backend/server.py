@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import jwt
+import httpx
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, status
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from google import genai
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -38,6 +39,19 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
 JWT_SECRET = os.getenv("JWT_SECRET", "change-this-secret")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN", "mi_token_secreto_2026_crash").strip()
+WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN", "").strip()
+WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "").strip()
+WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION", "v25.0").strip()
+WHATSAPP_TEMPLATE_NAME = os.getenv("WHATSAPP_TEMPLATE_NAME", "").strip()
+WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE", "en_US").strip()
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+}
+FALLBACK_REENGAGEMENT_IDS: set[str] = set()
+MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
 
 # ==================== MODELS ====================
 
@@ -105,6 +119,10 @@ class EmergencyContactCreate(BaseModel):
 class ContactVerificationRequest(BaseModel):
     token: str
     response_text: str
+
+
+class ContactTokenVerificationInput(BaseModel):
+    token: str
 
 
 class ImpactEvent(BaseModel):
@@ -211,6 +229,11 @@ class AlertDispatchResult(BaseModel):
     status: str
 
 
+class WhatsAppTestMessageRequest(BaseModel):
+    to: str
+    body: str = Field(min_length=1, max_length=1024)
+
+
 # ==================== HELPERS ====================
 
 
@@ -291,6 +314,111 @@ def integration_provider() -> str:
     return "mock"
 
 
+def is_whatsapp_ready() -> bool:
+    return bool(WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_NUMBER_ID)
+
+
+def normalize_phone_number(phone: str) -> str:
+    return re.sub(r"[^\d]", "", phone)
+
+
+async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
+    if not is_whatsapp_ready():
+        raise ValueError(
+            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
+        )
+
+    normalized_phone = normalize_phone_number(to_phone)
+
+    logging.info(
+        "WhatsApp Cloud send attempt phone_id=%s to=%s api_version=%s template=%s",
+        WHATSAPP_PHONE_NUMBER_ID,
+        normalized_phone,
+        WHATSAPP_API_VERSION,
+        WHATSAPP_TEMPLATE_NAME or "none",
+    )
+
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": normalized_phone,
+        "type": "text",
+        "text": {"body": message[:1024]},
+    }
+    endpoint = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        response = await client_http.post(endpoint, headers=headers, json=payload)
+
+    if response.status_code >= 400:
+        logging.error("WhatsApp Cloud API error (%s): %s", response.status_code, response.text)
+        raise HTTPException(status_code=502, detail="Error enviando mensaje por WhatsApp Cloud API")
+
+    response_data = response.json()
+    message_id = (
+        response_data.get("messages", [{}])[0].get("id")
+        if isinstance(response_data.get("messages"), list)
+        else None
+    )
+    if message_id:
+        MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
+    return message_id or "sent"
+
+
+async def send_whatsapp_template_message(to_phone: str) -> str:
+    if not is_whatsapp_ready():
+        raise ValueError(
+            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
+        )
+    if not WHATSAPP_TEMPLATE_NAME:
+        raise ValueError("WHATSAPP_TEMPLATE_NAME no está configurado para fallback de 24h.")
+
+    normalized_phone = normalize_phone_number(to_phone)
+    endpoint = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": normalized_phone,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_TEMPLATE_NAME,
+            "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+        },
+    }
+    logging.info(
+        "WhatsApp 24h fallback template send to=%s template=%s lang=%s",
+        normalized_phone,
+        WHATSAPP_TEMPLATE_NAME,
+        WHATSAPP_TEMPLATE_LANGUAGE,
+    )
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        response = await client_http.post(endpoint, headers=headers, json=payload)
+    if response.status_code >= 400:
+        logging.error("WhatsApp fallback template error (%s): %s", response.status_code, response.text)
+        raise HTTPException(status_code=502, detail="Error enviando template de re-engagement")
+    response_data = response.json()
+    message_id = (
+        response_data.get("messages", [{}])[0].get("id")
+        if isinstance(response_data.get("messages"), list)
+        else None
+    )
+    if message_id:
+        MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
+    return message_id or "sent"
+
+
 async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
     provider = integration_provider()
     logging.info(
@@ -301,6 +429,31 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
         contact.phone,
     )
     logging.info("Alert content preview: %s", message)
+
+    if channel == "whatsapp":
+        if not is_whatsapp_ready():
+            logging.warning(
+                "WhatsApp alert skipped for %s (%s): missing Cloud API configuration",
+                contact.name,
+                contact.phone,
+            )
+            return AlertDispatchResult(
+                contact_id=contact.id,
+                channel=channel,
+                status="failed:whatsapp_not_configured",
+            )
+        try:
+            message_id = await send_whatsapp_cloud_message(contact.phone, message)
+            return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
+        except HTTPException as exc:
+            logging.error(
+                "WhatsApp send failed for %s (%s): %s",
+                contact.name,
+                contact.phone,
+                exc.detail,
+            )
+            return AlertDispatchResult(contact_id=contact.id, channel=channel, status="failed:whatsapp_api_error")
+
     return AlertDispatchResult(contact_id=contact.id, channel=channel, status="sent")
 
 
@@ -326,14 +479,30 @@ async def dispatch_emergency_alerts(
     ).to_list(50)
 
     if not verified_contacts:
+        total_contacts = await db.emergency_contacts.count_documents({"owner_id": owner_id})
+        logging.warning(
+            "No se enviaron alertas para owner_id=%s: no hay contactos confirmados (total_registrados=%s).",
+            owner_id,
+            total_contacts,
+        )
         return []
 
     message = format_alert_message(impact, diagnosis)
     results: List[AlertDispatchResult] = []
+    message_channel_enabled = settings.sms_enabled or settings.message_type == "whatsapp"
+
+    logging.info(
+        "Dispatch config owner_id=%s -> message_type=%s, message_channel_enabled=%s, auto_call_enabled=%s, verified_contacts=%s",
+        owner_id,
+        settings.message_type,
+        message_channel_enabled,
+        settings.auto_call_enabled,
+        len(verified_contacts),
+    )
 
     for doc in verified_contacts:
         contact = EmergencyContact(**sanitize_doc(doc))
-        if settings.sms_enabled:
+        if message_channel_enabled:
             results.append(await send_contact_alert(contact, message, settings.message_type))
         if settings.auto_call_enabled:
             results.append(await place_automated_call(contact, message))
@@ -529,6 +698,17 @@ async def create_contact(
     )
     await db.emergency_contacts.insert_one(contact_obj.model_dump())
     logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
+    try:
+        verification_message = f"Hola, Aquí esta el TOKEN de VERIFICACION para CRASH: {token}"
+        await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
+        logging.info("Verification token sent to contact %s (%s)", contact_obj.name, contact_obj.phone)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning(
+            "Could not send verification token to %s (%s): %s",
+            contact_obj.name,
+            contact_obj.phone,
+            exc,
+        )
     return contact_obj
 
 
@@ -578,6 +758,66 @@ async def confirm_contact_opt_in(payload: ContactVerificationRequest) -> Dict[st
     return {"message": "Contact verified"}
 
 
+@api_router.post("/contacts/{contact_id}/verify-token")
+async def verify_contact_token_from_owner(
+    contact_id: str,
+    payload: ContactTokenVerificationInput,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    token_input = payload.token.strip().upper()
+    if not token_input:
+        raise HTTPException(status_code=400, detail="Token requerido")
+
+    contact = await db.emergency_contacts.find_one({"id": contact_id, "owner_id": current_user.id})
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+
+    saved_token = str(contact.get("opt_in_token", "")).strip().upper()
+    if token_input != saved_token:
+        raise HTTPException(status_code=400, detail="Token inválido")
+
+    await db.emergency_contacts.update_one(
+        {"id": contact_id, "owner_id": current_user.id},
+        {"$set": {"verified": True, "opt_in_status": "verified"}},
+    )
+    return {"message": "Contacto confirmado"}
+
+
+@api_router.post("/integrations/whatsapp/test")
+async def send_whatsapp_test_message(
+    payload: WhatsAppTestMessageRequest,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    _ = current_user
+    message_id = await send_whatsapp_cloud_message(payload.to, payload.body)
+    return {"status": "sent", "message_id": message_id}
+
+
+@api_router.get("/integrations/whatsapp/debug")
+async def whatsapp_debug_info(current_user: User = Depends(get_current_user)) -> Dict[str, Any]:
+    settings = await get_or_create_settings(current_user.id)
+    total_contacts = await db.emergency_contacts.count_documents({"owner_id": current_user.id})
+    verified_contacts = await db.emergency_contacts.count_documents(
+        {"owner_id": current_user.id, "verified": True, "opt_in_status": "verified"}
+    )
+    dispatchable_contacts = verified_contacts if verified_contacts > 0 else total_contacts
+    return {
+        "whatsapp_ready": is_whatsapp_ready(),
+        "has_access_token": bool(WHATSAPP_ACCESS_TOKEN),
+        "has_phone_number_id": bool(WHATSAPP_PHONE_NUMBER_ID),
+        "whatsapp_api_version": WHATSAPP_API_VERSION,
+        "whatsapp_template_name": WHATSAPP_TEMPLATE_NAME or None,
+        "whatsapp_template_language": WHATSAPP_TEMPLATE_LANGUAGE,
+        "whatsapp_template_fallback_on_24h": WHATSAPP_TEMPLATE_FALLBACK_ON_24H,
+        "message_type": settings.message_type,
+        "sms_enabled": settings.sms_enabled,
+        "impact_threshold": settings.impact_threshold,
+        "total_contacts": total_contacts,
+        "verified_contacts": verified_contacts,
+        "dispatchable_contacts": dispatchable_contacts,
+    }
+
+
 @api_router.post("/webhooks/whatsapp")
 async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
     body_text = str(payload.get("Body", "")).strip().upper()
@@ -587,6 +827,90 @@ async def whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
             {"phone": from_phone},
             {"$set": {"verified": True, "opt_in_status": "verified"}},
         )
+    return {"status": "ok"}
+
+
+@app.get("/webhook/whatsapp")
+async def verify_whatsapp_webhook(request: Request) -> Response:
+    mode = request.query_params.get("hub.mode")
+    token = (request.query_params.get("hub.verify_token") or "").strip()
+    challenge = request.query_params.get("hub.challenge")
+
+    if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN and challenge:
+        return Response(content=challenge, status_code=200, media_type="text/plain")
+
+    if token == "WEBHOOK_VERIFY_TOKEN":
+        logging.warning(
+            "Webhook verification failed because literal token name was provided. "
+            "Use the actual token value, not the env var name."
+        )
+    else:
+        logging.warning("Webhook verification failed. mode=%s token_provided=%s", mode, bool(token))
+
+    raise HTTPException(status_code=403, detail="Invalid verify token")
+
+
+@app.post("/webhook/whatsapp")
+async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
+    logging.info("WhatsApp webhook event received: %s", payload)
+
+    try:
+        entries = payload.get("entry", [])
+        for entry in entries:
+            changes = entry.get("changes", [])
+            for change in changes:
+                value = change.get("value", {})
+                messages = value.get("messages", [])
+                for message in messages:
+                    from_phone = normalize_phone_number(str(message.get("from", "")))
+                    body_text = (
+                        message.get("text", {}).get("body", "")
+                        if isinstance(message.get("text"), dict)
+                        else ""
+                    )
+                    if body_text.strip().upper() == "ACEPTO" and from_phone:
+                        await db.emergency_contacts.update_one(
+                            {"phone": {"$in": [from_phone, f"+{from_phone}"]}},
+                            {"$set": {"verified": True, "opt_in_status": "verified"}},
+                        )
+                statuses = value.get("statuses", [])
+                for status_obj in statuses:
+                    status_value = str(status_obj.get("status", "")).lower()
+                    status_id = str(status_obj.get("id", "")).strip()
+                    recipient_id = normalize_phone_number(str(status_obj.get("recipient_id", "")))
+                    original_phone = MESSAGE_ID_TO_PHONE.get(status_id, recipient_id)
+                    errors = status_obj.get("errors", []) if isinstance(status_obj.get("errors"), list) else []
+                    error_codes = [str(err.get("code")) for err in errors if isinstance(err, dict)]
+                    is_reengagement_failure = status_value == "failed" and "131047" in error_codes
+                    if (
+                        is_reengagement_failure
+                        and original_phone
+                        and WHATSAPP_TEMPLATE_FALLBACK_ON_24H
+                        and WHATSAPP_TEMPLATE_NAME
+                        and status_id not in FALLBACK_REENGAGEMENT_IDS
+                    ):
+                        FALLBACK_REENGAGEMENT_IDS.add(status_id)
+                        try:
+                            fallback_message_id = await send_whatsapp_template_message(original_phone)
+                            logging.info(
+                                "Re-engagement fallback template sent to %s with message_id=%s",
+                                original_phone,
+                                fallback_message_id,
+                            )
+                        except Exception as fallback_exc:  # noqa: BLE001
+                            logging.exception(
+                                "Failed to send re-engagement fallback template to %s: %s",
+                                original_phone,
+                                fallback_exc,
+                            )
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Error processing WhatsApp webhook payload: %s", exc)
+
+    return {"status": "ok"}
+
+
+@app.get("/health")
+async def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
@@ -663,6 +987,14 @@ async def create_impact(
 
     impact_obj = ImpactEvent(owner_id=current_user.id, severity=severity, **impact.model_dump())
 
+    logging.info(
+        "Impact received owner_id=%s g_force=%.2f threshold=%.2f severity=%s",
+        current_user.id,
+        impact.g_force,
+        settings.impact_threshold,
+        severity,
+    )
+
     if impact.g_force >= settings.impact_threshold:
         diagnosis_request = AIDiagnosisRequest(**impact.model_dump(), language=settings.language)
         diagnosis = await get_ai_diagnosis(diagnosis_request)
@@ -670,7 +1002,21 @@ async def create_impact(
         impact_obj.first_aid_guide = " | ".join(diagnosis.first_aid_steps)
 
         dispatch_results = await dispatch_emergency_alerts(current_user.id, impact_obj, diagnosis, settings)
-        impact_obj.alerts_dispatched = len(dispatch_results)
+        impact_obj.alerts_dispatched = sum(1 for result in dispatch_results if result.status.startswith("sent"))
+        logging.info(
+            "Impact dispatch finished owner_id=%s sent_count=%s total_results=%s statuses=%s",
+            current_user.id,
+            impact_obj.alerts_dispatched,
+            len(dispatch_results),
+            [result.status for result in dispatch_results],
+        )
+    else:
+        logging.info(
+            "Impact below threshold owner_id=%s g_force=%.2f threshold=%.2f (no dispatch)",
+            current_user.id,
+            impact.g_force,
+            settings.impact_threshold,
+        )
 
     await db.impact_events.insert_one(impact_obj.model_dump())
     return impact_obj
