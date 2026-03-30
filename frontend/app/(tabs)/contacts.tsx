@@ -13,7 +13,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useCrashStore, EmergencyContact } from '../../src/store/crashStore';
-import { contactsApi } from '../../src/services/api';
+import { contactsApi, getApiErrorMessage } from '../../src/services/api';
 import { ContactModal } from '../../src/components/ContactModal';
 
 export default function ContactsScreen() {
@@ -77,9 +77,20 @@ export default function ContactsScreen() {
       await loadContacts();
     } catch (error) {
       console.error('Error saving contact:', error);
+      const contactSaved = Boolean((error as any)?.response?.data?.detail?.contact_saved);
+      if (contactSaved) {
+        await loadContacts();
+      }
       Alert.alert(
         settings.language === 'es' ? 'Error' : 'Error',
-        settings.language === 'es' ? 'No se pudo guardar el contacto' : 'Could not save contact'
+        contactSaved
+          ? settings.language === 'es'
+            ? `El contacto se guardó, pero falló el envío del token. ${getApiErrorMessage(error, 'Revisa la configuración de WhatsApp.')}`
+            : `Contact was saved, but token delivery failed. ${getApiErrorMessage(error, 'Check WhatsApp configuration.')}`
+          : getApiErrorMessage(
+              error,
+              settings.language === 'es' ? 'No se pudo guardar el contacto' : 'Could not save contact'
+            )
       );
     }
   };

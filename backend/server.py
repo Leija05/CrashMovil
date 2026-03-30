@@ -322,6 +322,23 @@ def normalize_phone_number(phone: str) -> str:
     return re.sub(r"[^\d]", "", phone)
 
 
+def parse_whatsapp_error(response: httpx.Response) -> Dict[str, Any]:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    error_data = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error_data, dict):
+        return {"message": response.text}
+    return {
+        "message": error_data.get("message", response.text),
+        "type": error_data.get("type"),
+        "code": error_data.get("code"),
+        "error_subcode": error_data.get("error_subcode"),
+        "fbtrace_id": error_data.get("fbtrace_id"),
+    }
+
+
 async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
     if not is_whatsapp_ready():
         raise ValueError(
@@ -357,8 +374,21 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
         response = await client_http.post(endpoint, headers=headers, json=payload)
 
     if response.status_code >= 400:
-        logging.error("WhatsApp Cloud API error (%s): %s", response.status_code, response.text)
-        raise HTTPException(status_code=502, detail="Error enviando mensaje por WhatsApp Cloud API")
+        error = parse_whatsapp_error(response)
+        logging.error("WhatsApp Cloud API error (%s): %s", response.status_code, error)
+        detail: Dict[str, Any] = {
+            "code": "WHATSAPP_API_ERROR",
+            "message": "Error enviando mensaje por WhatsApp Cloud API",
+            "provider_status": response.status_code,
+            "provider_error": error,
+        }
+        if error.get("code") == 190 and error.get("error_subcode") == 463:
+            detail["code"] = "WHATSAPP_TOKEN_EXPIRED"
+            detail["message"] = (
+                "El token de WhatsApp Cloud API expiró. "
+                "Genera un token nuevo en Meta for Developers y actualiza WHATSAPP_ACCESS_TOKEN."
+            )
+        raise HTTPException(status_code=502, detail=detail)
 
     response_data = response.json()
     message_id = (
@@ -709,6 +739,16 @@ async def create_contact(
             contact_obj.phone,
             exc,
         )
+        if isinstance(exc, HTTPException):
+            error_detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail={
+                    **error_detail,
+                    "contact_saved": True,
+                    "contact_id": contact_obj.id,
+                },
+            ) from exc
     return contact_obj
 
 
