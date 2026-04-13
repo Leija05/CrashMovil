@@ -4,6 +4,9 @@
 .idea/
 .vscode/
 
+/.metro-cache
+
+
 # Dependencies
 node_modules/
 /node_modules
