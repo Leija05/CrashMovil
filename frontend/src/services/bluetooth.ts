@@ -22,7 +22,6 @@ const loadBluetoothClassic = (): BluetoothClassicModule => {
   try {
     // Use eval to avoid Metro trying to statically resolve this optional dependency
     // in platforms/builds where it is not installed.
-    // eslint-disable-next-line no-eval
     const dynamicRequire = eval('require') as (moduleName: string) => any;
     const module = dynamicRequire('react-native-bluetooth-classic');
 
