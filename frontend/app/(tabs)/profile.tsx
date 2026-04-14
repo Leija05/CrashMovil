@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import { useCrashStore } from '../../src/store/crashStore';
-import { authApi, profileApi, setAuthToken } from '../../src/services/api';
+import { authApi, getApiErrorMessage, profileApi, setAuthToken } from '../../src/services/api';
 
 const BLOOD_TYPES = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const AUTH_TOKEN_KEY = 'auth_token';
@@ -145,7 +145,8 @@ export default function ProfileScreen() {
       await loadProfile();
     } catch (error) {
       console.error('Error signing in:', error);
-      Alert.alert(settings.language === 'es' ? 'Error' : 'Error', screenTexts.authError);
+      const detail = getApiErrorMessage(error, screenTexts.authError);
+      Alert.alert(settings.language === 'es' ? 'Error' : 'Error', detail);
     } finally {
       setAuthLoading(false);
     }
