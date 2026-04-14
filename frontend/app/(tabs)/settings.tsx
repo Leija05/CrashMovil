@@ -16,6 +16,7 @@ import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
 import { settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
+import { Accelerometer, Gyroscope } from 'expo-sensors';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -24,6 +25,11 @@ export default function SettingsScreen() {
     updateSettings,
     isSimulationMode,
     setSimulationMode,
+    isConnected,
+    availableDevices,
+    connectedDeviceId,
+    setAvailableDevices,
+    connectDevice,
     user,
   } = useCrashStore();
   const isDark = settings.theme === 'dark';
@@ -68,6 +74,41 @@ export default function SettingsScreen() {
   const handleSimulationToggle = (enabled: boolean) => {
     setSimulationMode(enabled);
   };
+
+  const handleSearchDevices = async () => {
+    try {
+      const [accAvailable, gyroAvailable] = await Promise.all([
+        Accelerometer.isAvailableAsync(),
+        Gyroscope.isAvailableAsync(),
+      ]);
+      const devices = [
+        {
+          id: 'simulator',
+          name: settings.language === 'es' ? 'Simulador local' : 'Local simulator',
+          type: 'simulator' as const,
+          is_real: false,
+        },
+      ];
+      if (accAvailable && gyroAvailable) {
+        devices.unshift({
+          id: 'phone-sensors',
+          name: settings.language === 'es' ? 'Sensores del teléfono' : 'Phone sensors',
+          type: 'sensor' as const,
+          is_real: true,
+        });
+      }
+      setAvailableDevices(devices);
+    } catch (error) {
+      console.error('Device scan error:', error);
+    }
+  };
+
+  const handleConnectDevice = (deviceId: string) => {
+    const selectedDevice = availableDevices.find((device) => device.id === deviceId);
+    if (!selectedDevice) return;
+    connectDevice(selectedDevice);
+    setDeviceName(selectedDevice.name);
+  };
   
   return (
     <SafeAreaView style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}>
@@ -93,6 +134,60 @@ export default function SettingsScreen() {
               <Ionicons name="checkmark" size={20} color="#000" />
             </TouchableOpacity>
           </View>
+        </View>
+
+        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
+              {settings.language === 'es' ? 'Conexión de dispositivo' : 'Device connection'}
+            </Text>
+            <TouchableOpacity style={styles.scanButton} onPress={handleSearchDevices}>
+              <Ionicons name="search" size={16} color="#000" />
+              <Text style={styles.scanButtonText}>
+                {settings.language === 'es' ? 'Buscar' : 'Scan'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={[styles.sectionSubtitle, isDark ? { color: '#888' } : { color: '#666' }]}>
+            {settings.language === 'es'
+              ? 'Selecciona la fuente de telemetría desde la app.'
+              : 'Select the telemetry source from the app.'}
+          </Text>
+          {availableDevices.map((device) => {
+            const isSelected = connectedDeviceId === device.id;
+            return (
+              <TouchableOpacity
+                key={device.id}
+                style={[
+                  styles.deviceRow,
+                  isDark ? styles.deviceRowDark : styles.deviceRowLight,
+                  isSelected && styles.deviceRowSelected,
+                ]}
+                onPress={() => handleConnectDevice(device.id)}
+              >
+                <View>
+                  <Text style={[styles.deviceName, isDark ? styles.textDark : styles.textLight]}>
+                    {device.name}
+                  </Text>
+                  <Text style={styles.deviceMeta}>
+                    {device.is_real
+                      ? settings.language === 'es'
+                        ? 'Datos reales'
+                        : 'Real data'
+                      : settings.language === 'es'
+                        ? 'Simulación'
+                        : 'Simulation'}
+                  </Text>
+                </View>
+                {isSelected && <Ionicons name="checkmark-circle" size={20} color="#22c55e" />}
+              </TouchableOpacity>
+            );
+          })}
+          <Text style={styles.connectionStatus}>
+            {settings.language === 'es'
+              ? `Estado: ${isConnected ? 'Conectado' : 'Sin conexión'}`
+              : `Status: ${isConnected ? 'Connected' : 'Disconnected'}`}
+          </Text>
         </View>
         
         {/* Impact Threshold */}
@@ -480,6 +575,54 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 12,
     marginBottom: 12,
+  },
+  scanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#00d9ff',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    gap: 6,
+  },
+  scanButtonText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  deviceRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+    marginBottom: 8,
+  },
+  deviceRowDark: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  deviceRowLight: {
+    backgroundColor: '#fff',
+  },
+  deviceRowSelected: {
+    borderColor: '#22c55e',
+  },
+  deviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deviceMeta: {
+    fontSize: 12,
+    color: '#888',
+    marginTop: 3,
+  },
+  connectionStatus: {
+    marginTop: 8,
+    color: '#00d9ff',
+    fontWeight: '700',
+    fontSize: 12,
   },
   simulationSection: {
     borderWidth: 1,

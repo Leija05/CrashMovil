@@ -66,6 +66,13 @@ export interface TelemetryData {
   g_force: number;
 }
 
+export interface DiscoverableDevice {
+  id: string;
+  name: string;
+  type: 'sensor' | 'simulator';
+  is_real: boolean;
+}
+
 interface CrashStore {
   // Connection state
   isConnected: boolean;
@@ -85,6 +92,8 @@ interface CrashStore {
   authToken: string | null;
   user: AuthUser | null;
   telemetry: TelemetryData;
+  availableDevices: DiscoverableDevice[];
+  connectedDeviceId: string | null;
   
   // Location
   currentLocation: { latitude: number; longitude: number } | null;
@@ -107,6 +116,8 @@ interface CrashStore {
   setAuthSession: (token: string | null, user: AuthUser | null) => void;
   setTelemetry: (telemetry: TelemetryData) => void;
   setCurrentLocation: (location: { latitude: number; longitude: number } | null) => void;
+  setAvailableDevices: (devices: DiscoverableDevice[]) => void;
+  connectDevice: (device: DiscoverableDevice | null) => void;
 }
 
 const defaultSettings: DeviceSettings = {
@@ -147,6 +158,15 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
   user: null,
   telemetry: defaultTelemetry,
   currentLocation: null,
+  availableDevices: [
+    {
+      id: 'simulator',
+      name: 'Simulador local',
+      type: 'simulator',
+      is_real: false,
+    },
+  ],
+  connectedDeviceId: null,
   
   // Actions
   setConnected: (connected) => set({ isConnected: connected }),
@@ -177,4 +197,14 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
   setAuthSession: (token, user) => set({ authToken: token, user }),
   setTelemetry: (telemetry) => set({ telemetry }),
   setCurrentLocation: (location) => set({ currentLocation: location }),
+  setAvailableDevices: (devices) => set({ availableDevices: devices }),
+  connectDevice: (device) =>
+    set({
+      connectedDeviceId: device ? device.id : null,
+      isConnected: Boolean(device),
+      isSimulationMode: device ? !device.is_real : true,
+      settings: device
+        ? { ...get().settings, device_name: device.name }
+        : get().settings,
+    }),
 }));

@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
 import * as Location from 'expo-location';
+import { Accelerometer, Gyroscope } from 'expo-sensors';
 import { useCrashStore, ImpactEvent } from '../../src/store/crashStore';
 import { impactsApi, contactsApi, settingsApi, statsApi } from '../../src/services/api';
 import { TelemetryChart } from '../../src/components/TelemetryChart';
@@ -62,7 +63,6 @@ export default function HomeScreen() {
     setImpacts,
     setContacts,
     setSettings,
-    setConnected,
     user,
   } = useCrashStore();
   
@@ -78,6 +78,10 @@ export default function HomeScreen() {
   const cardAnim = useRef(new Animated.Value(0)).current;
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
+  const accelSubscription = useRef<any>(null);
+  const gyroSubscription = useRef<any>(null);
+  const latestAccel = useRef({ x: 0, y: 0, z: 1 });
+  const latestGyro = useRef({ x: 0, y: 0, z: 0 });
   
   useEffect(() => {
     if (user) {
@@ -116,15 +120,23 @@ export default function HomeScreen() {
   };
   
   useEffect(() => {
-    if (isSimulationMode) {
+    if (isSimulationMode && isConnected) {
       startSimulation();
-      setConnected(true);
     } else {
       stopSimulation();
     }
+
+    if (!isSimulationMode && isConnected) {
+      startRealSensors();
+    } else {
+      stopRealSensors();
+    }
     
-    return () => stopSimulation();
-  }, [isSimulationMode]);
+    return () => {
+      stopSimulation();
+      stopRealSensors();
+    };
+  }, [isSimulationMode, isConnected]);
   
   const loadData = async () => {
     if (!user) return;
@@ -181,6 +193,52 @@ export default function HomeScreen() {
       clearInterval(simulationInterval.current);
       simulationInterval.current = null;
     }
+  };
+
+  const startRealSensors = () => {
+    if (accelSubscription.current || gyroSubscription.current) return;
+
+    Accelerometer.setUpdateInterval(500);
+    Gyroscope.setUpdateInterval(500);
+
+    accelSubscription.current = Accelerometer.addListener((data) => {
+      latestAccel.current = data;
+      updateTelemetryFromSensors();
+    });
+
+    gyroSubscription.current = Gyroscope.addListener((data) => {
+      latestGyro.current = data;
+      updateTelemetryFromSensors();
+    });
+  };
+
+  const stopRealSensors = () => {
+    accelSubscription.current?.remove?.();
+    gyroSubscription.current?.remove?.();
+    accelSubscription.current = null;
+    gyroSubscription.current = null;
+  };
+
+  const updateTelemetryFromSensors = () => {
+    const accel = latestAccel.current;
+    const gyro = latestGyro.current;
+    const gForce = Math.sqrt(accel.x ** 2 + accel.y ** 2 + accel.z ** 2);
+    const newTelemetry = {
+      acceleration_x: accel.x,
+      acceleration_y: accel.y,
+      acceleration_z: accel.z,
+      gyro_x: gyro.x,
+      gyro_y: gyro.y,
+      gyro_z: gyro.z,
+      g_force: gForce,
+    };
+    setTelemetry(newTelemetry);
+    setTelemetryHistory((prev) => ({
+      x: [...prev.x.slice(-19), newTelemetry.acceleration_x],
+      y: [...prev.y.slice(-19), newTelemetry.acceleration_y],
+      z: [...prev.z.slice(-19), newTelemetry.acceleration_z],
+      g: [...prev.g.slice(-19), newTelemetry.g_force],
+    }));
   };
   
   const simulateImpact = async () => {
