@@ -1,5 +1,62 @@
 # CrashMovil — Resumen del Sistema
 
+## 🚀 Cómo correr backend + frontend (local)
+
+### 1) Backend (FastAPI)
+
+Desde la carpeta del proyecto:
+
+```bash
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # En Windows PowerShell: .venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+cp .env.example .env       # En Windows PowerShell: Copy-Item .env.example .env
+uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Prueba rápida:
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+> Si vas a usar ngrok, abre otro terminal y ejecuta:
+>
+> ```bash
+> ngrok http 8000
+> ```
+
+### 2) Frontend (Expo)
+
+En otra terminal:
+
+```bash
+cd frontend
+npm install
+```
+
+Crea un archivo `.env` dentro de `frontend/` con:
+
+```bash
+EXPO_PUBLIC_BACKEND_URL=https://TU-SUBDOMINIO.ngrok-free.dev
+```
+
+Luego inicia Expo:
+
+```bash
+npx expo start
+```
+
+## ⚠️ Por qué te aparece `400 Bad Request` en `/api/auth/register`
+
+Ese `400` en tu backend normalmente significa que la petición sí llegó, pero el payload no pasó validación de negocio. En este proyecto, las causas más comunes son:
+
+1. **Email ya registrado** → retorna `400` con `Email already registered`.
+2. **Contraseña menor a 8 caracteres** → Pydantic rechaza el body (también termina en `400/422`).
+
+Además, en el frontend se estaba mostrando un error genérico al hacer login/registro. Ahora la app muestra el mensaje real que viene del backend para que sepas exactamente qué corregir.
+
 ## 1) Puntos más importantes
 
 - Sistema automático que detecta choques y envía alertas sin intervención del usuario.

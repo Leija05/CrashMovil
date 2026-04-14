@@ -9,6 +9,7 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -31,12 +32,16 @@ export default function SettingsScreen() {
     user,
   } = useCrashStore();
   const isDark = settings.theme === 'dark';
+  const bluetoothClassicSupported = Platform.OS === 'android';
   
   const [deviceName, setDeviceName] = useState(settings.device_name);
   const [isScanning, setIsScanning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [discoveredDevices, setDiscoveredDevices] = useState<ScanDevice[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+
+  const isBluetoothUnavailableError = (error: unknown) =>
+    error instanceof Error && /bluetooth classic is unavailable/i.test(error.message);
   
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
@@ -83,6 +88,16 @@ export default function SettingsScreen() {
   };
 
   const handleScanBluetooth = async () => {
+    if (!bluetoothClassicSupported) {
+      Alert.alert(
+        settings.language === 'es' ? 'Bluetooth no disponible' : 'Bluetooth unavailable',
+        settings.language === 'es'
+          ? 'El escaneo Bluetooth clásico (HC-05/HC-06) solo está disponible en Android.'
+          : 'Classic Bluetooth scanning (HC-05/HC-06) is only available on Android.'
+      );
+      return;
+    }
+
     setIsScanning(true);
     setDiscoveredDevices([]);
     let foundCount = 0;
@@ -100,7 +115,9 @@ export default function SettingsScreen() {
         );
       }
     } catch (error) {
-      console.error('Bluetooth scan error:', error);
+      if (!isBluetoothUnavailableError(error)) {
+        console.error('Bluetooth scan error:', error);
+      }
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
         settings.language === 'es'
@@ -129,7 +146,9 @@ export default function SettingsScreen() {
           : `Connected to ${connectedDevice.name}`
       );
     } catch (error) {
-      console.error('Bluetooth connect error:', error);
+      if (!isBluetoothUnavailableError(error)) {
+        console.error('Bluetooth connect error:', error);
+      }
       setConnected(false);
       Alert.alert(
         settings.language === 'es' ? 'No se pudo conectar' : 'Connection failed',
@@ -181,10 +200,17 @@ export default function SettingsScreen() {
               ? 'Escanea y vincula tu módulo Bluetooth (HC-05) para recibir telemetría real.'
               : 'Scan and pair your Bluetooth module (HC-05) to receive real telemetry.'}
           </Text>
+          {!bluetoothClassicSupported && (
+            <Text style={[styles.sectionSubtitle, { color: '#f59e0b', marginTop: 6 }]}>
+              {settings.language === 'es'
+                ? 'Bluetooth clásico no está disponible en iOS. Usa Android para vincular HC-05/HC-06.'
+                : 'Classic Bluetooth is not available on iOS. Use Android to pair HC-05/HC-06.'}
+            </Text>
+          )}
           <TouchableOpacity
             style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
             onPress={handleScanBluetooth}
-            disabled={isScanning || isConnecting}
+            disabled={isScanning || isConnecting || !bluetoothClassicSupported}
           >
             <Ionicons name="bluetooth" size={18} color="#fff" />
             <Text style={styles.scanButtonText}>

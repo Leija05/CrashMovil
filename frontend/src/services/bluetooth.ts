@@ -5,10 +5,45 @@ export interface ScanDevice {
   name: string;
 }
 
-// react-native-bluetooth-classic has different typings per version.
-// We intentionally use `any` to keep compatibility across versions.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const BluetoothClassic = require('react-native-bluetooth-classic').default as any;
+type BluetoothClassicModule = {
+  requestBluetoothEnabled: () => Promise<void>;
+  startDiscovery: () => Promise<any[]>;
+  connectToDevice: (deviceId: string, options?: Record<string, unknown>) => Promise<any>;
+  onDataReceived: (handler: (event: any) => void) => () => void;
+  disconnectFromDevice: (deviceId: string) => Promise<void>;
+};
+
+const createBluetoothUnavailableError = () =>
+  new Error(
+    'Bluetooth Classic is unavailable. Install and configure react-native-bluetooth-classic on Android to use this feature.'
+  );
+
+const loadBluetoothClassic = (): BluetoothClassicModule => {
+  try {
+    // Use eval to avoid Metro trying to statically resolve this optional dependency
+    // in platforms/builds where it is not installed.
+    const dynamicRequire = eval('require') as (moduleName: string) => any;
+    const module = dynamicRequire('react-native-bluetooth-classic');
+
+    return (module?.default ?? module) as BluetoothClassicModule;
+  } catch {
+    return {
+      requestBluetoothEnabled: async () => {
+        throw createBluetoothUnavailableError();
+      },
+      startDiscovery: async () => {
+        throw createBluetoothUnavailableError();
+      },
+      connectToDevice: async () => {
+        throw createBluetoothUnavailableError();
+      },
+      onDataReceived: () => () => undefined,
+      disconnectFromDevice: async () => undefined,
+    };
+  }
+};
+
+const BluetoothClassic = loadBluetoothClassic();
 
 const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
