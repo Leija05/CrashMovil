@@ -16,6 +16,15 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
    npx expo start
    ```
 
+## Bluetooth telemetry (Arduino)
+
+- The Settings tab now includes a Classic Bluetooth scan/connect section to bind an HC-05 telemetry module.
+- The app expects serial payloads coming from HC-05 (SPP) with newline (`\\n`) delimiter.
+- Accepted payload formats from firmware:
+  - JSON: `{\"ax\":0.1,\"ay\":0.2,\"az\":1.0,\"gx\":0.0,\"gy\":0.0,\"gz\":0.0,\"g\":1.02}`
+  - CSV: `ax,ay,az,gx,gy,gz,g`
+- Compatible modules: HC-05 / HC-06 (Classic Bluetooth).
+
 In the output, you'll find options to open the app in a
 
 - [development build](https://docs.expo.dev/develop/development-builds/introduction/)
