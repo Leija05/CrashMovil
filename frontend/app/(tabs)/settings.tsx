@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -87,6 +88,29 @@ export default function SettingsScreen() {
     }
   };
 
+  const requestBluetoothPermissions = async () => {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      const permissions =
+        Platform.Version >= 31
+          ? [
+              PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+              PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+              PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            ]
+          : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+
+      const result = await PermissionsAndroid.requestMultiple(permissions);
+      return permissions.every(
+        (permission) => result[permission] === PermissionsAndroid.RESULTS.GRANTED
+      );
+    } catch (error) {
+      console.error('Bluetooth permissions error:', error);
+      return false;
+    }
+  };
+
   const handleScanBluetooth = async () => {
     if (!bluetoothClassicSupported) {
       Alert.alert(
@@ -102,6 +126,17 @@ export default function SettingsScreen() {
     setDiscoveredDevices([]);
     const foundDevices: ScanDevice[] = [];
     try {
+      const hasPermissions = await requestBluetoothPermissions();
+      if (!hasPermissions) {
+        Alert.alert(
+          settings.language === 'es' ? 'Permisos requeridos' : 'Permissions required',
+          settings.language === 'es'
+            ? 'Activa permisos de Bluetooth y ubicación para buscar tu módulo HC-05.'
+            : 'Enable Bluetooth and location permissions to scan for your HC-05 module.'
+        );
+        return;
+      }
+
       await bluetoothTelemetryService.startScan((device) => {
         foundDevices.push(device);
         setDiscoveredDevices((prev) => [...prev, device]);
@@ -156,8 +191,12 @@ export default function SettingsScreen() {
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
         settings.language === 'es'
-          ? 'No se pudo iniciar el escaneo Bluetooth.'
-          : 'Could not start Bluetooth scan.'
+          ? `No se pudo iniciar el escaneo Bluetooth.${
+              error instanceof Error && error.message ? `\n\nDetalle: ${error.message}` : ''
+            }`
+          : `Could not start Bluetooth scan.${
+              error instanceof Error && error.message ? `\n\nDetails: ${error.message}` : ''
+            }`
       );
     } finally {
       setIsScanning(false);
