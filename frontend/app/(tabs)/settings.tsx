@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -16,6 +17,7 @@ import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
 import { settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
+import { bluetoothTelemetryService, ScanDevice } from '../../src/services/bluetooth';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -24,11 +26,17 @@ export default function SettingsScreen() {
     updateSettings,
     isSimulationMode,
     setSimulationMode,
+    setConnected,
+    setTelemetry,
     user,
   } = useCrashStore();
   const isDark = settings.theme === 'dark';
   
   const [deviceName, setDeviceName] = useState(settings.device_name);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [discoveredDevices, setDiscoveredDevices] = useState<ScanDevice[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
@@ -67,6 +75,71 @@ export default function SettingsScreen() {
   // ============================================================
   const handleSimulationToggle = (enabled: boolean) => {
     setSimulationMode(enabled);
+    if (enabled) {
+      bluetoothTelemetryService.disconnect();
+      setConnected(false);
+      setSelectedDeviceId(null);
+    }
+  };
+
+  const handleScanBluetooth = async () => {
+    setIsScanning(true);
+    setDiscoveredDevices([]);
+    let foundCount = 0;
+    try {
+      await bluetoothTelemetryService.startScan((device) => {
+        foundCount += 1;
+        setDiscoveredDevices((prev) => [...prev, device]);
+      });
+      if (foundCount === 0) {
+        Alert.alert(
+          settings.language === 'es' ? 'Sin dispositivos' : 'No devices found',
+          settings.language === 'es'
+            ? 'No se encontraron dispositivos Bluetooth cercanos.'
+            : 'No nearby Bluetooth devices were found.'
+        );
+      }
+    } catch (error) {
+      console.error('Bluetooth scan error:', error);
+      Alert.alert(
+        settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
+        settings.language === 'es'
+          ? 'No se pudo iniciar el escaneo Bluetooth.'
+          : 'Could not start Bluetooth scan.'
+      );
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleConnectDevice = async (device: ScanDevice) => {
+    setIsConnecting(true);
+    setSelectedDeviceId(device.id);
+    try {
+      const connectedDevice = await bluetoothTelemetryService.connect(device.id, setTelemetry);
+      setSelectedDeviceId(connectedDevice.id);
+      setConnected(true);
+      setSimulationMode(false);
+      setDeviceName(connectedDevice.name);
+      handleUpdateSettings({ device_name: connectedDevice.name });
+      Alert.alert(
+        settings.language === 'es' ? 'Dispositivo conectado' : 'Device connected',
+        settings.language === 'es'
+          ? `Conectado a ${connectedDevice.name}`
+          : `Connected to ${connectedDevice.name}`
+      );
+    } catch (error) {
+      console.error('Bluetooth connect error:', error);
+      setConnected(false);
+      Alert.alert(
+        settings.language === 'es' ? 'No se pudo conectar' : 'Connection failed',
+        settings.language === 'es'
+          ? 'Verifica que tu módulo HC-05 esté emparejado y enviando datos.'
+          : 'Verify your HC-05 module is paired and streaming telemetry.'
+      );
+    } finally {
+      setIsConnecting(false);
+    }
   };
   
   return (
@@ -93,6 +166,67 @@ export default function SettingsScreen() {
               <Ionicons name="checkmark" size={20} color="#000" />
             </TouchableOpacity>
           </View>
+        </View>
+
+        {/* Bluetooth Device Discovery */}
+        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
+              {settings.language === 'es' ? 'Dispositivos Bluetooth' : 'Bluetooth Devices'}
+            </Text>
+            {isScanning && <ActivityIndicator size="small" color="#00d9ff" />}
+          </View>
+          <Text style={[styles.sectionSubtitle, isDark ? { color: '#888' } : { color: '#666' }]}>
+            {settings.language === 'es'
+              ? 'Escanea y vincula tu módulo Bluetooth (HC-05) para recibir telemetría real.'
+              : 'Scan and pair your Bluetooth module (HC-05) to receive real telemetry.'}
+          </Text>
+          <TouchableOpacity
+            style={[styles.scanButton, isScanning && styles.scanButtonDisabled]}
+            onPress={handleScanBluetooth}
+            disabled={isScanning || isConnecting}
+          >
+            <Ionicons name="bluetooth" size={18} color="#fff" />
+            <Text style={styles.scanButtonText}>
+              {isScanning
+                ? (settings.language === 'es' ? 'Buscando...' : 'Scanning...')
+                : (settings.language === 'es' ? 'Buscar dispositivos' : 'Scan devices')}
+            </Text>
+          </TouchableOpacity>
+
+          {discoveredDevices.map((device) => (
+            <TouchableOpacity
+              key={device.id}
+              style={[
+                styles.deviceCard,
+                isDark ? styles.deviceCardDark : styles.deviceCardLight,
+                selectedDeviceId === device.id && styles.deviceCardSelected,
+              ]}
+              onPress={() => handleConnectDevice(device)}
+              disabled={isConnecting}
+            >
+              <View style={styles.deviceCardInfo}>
+                <Text style={[styles.deviceName, isDark ? styles.textDark : styles.textLight]}>
+                  {device.name}
+                </Text>
+                <Text style={styles.deviceId}>{device.id}</Text>
+              </View>
+              {isConnecting && selectedDeviceId === device.id ? (
+                <ActivityIndicator size="small" color="#00d9ff" />
+              ) : (
+                <Ionicons
+                  name={selectedDeviceId === device.id ? 'checkmark-circle' : 'link'}
+                  size={22}
+                  color={selectedDeviceId === device.id ? '#22c55e' : '#00d9ff'}
+                />
+              )}
+            </TouchableOpacity>
+          ))}
+          <Text style={styles.bluetoothNote}>
+            {settings.language === 'es'
+              ? 'Nota: esta conexión usa Bluetooth clásico (SPP), compatible con HC-05/HC-06.'
+              : 'Note: this connection uses Classic Bluetooth (SPP), compatible with HC-05/HC-06.'}
+          </Text>
         </View>
         
         {/* Impact Threshold */}
@@ -480,6 +614,61 @@ const styles = StyleSheet.create({
   sectionSubtitle: {
     fontSize: 12,
     marginBottom: 12,
+  },
+  scanButton: {
+    backgroundColor: '#0ea5e9',
+    borderRadius: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    marginBottom: 12,
+  },
+  scanButtonDisabled: {
+    opacity: 0.7,
+  },
+  scanButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deviceCard: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+    padding: 12,
+    marginBottom: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  deviceCardDark: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  deviceCardLight: {
+    backgroundColor: '#f8fafc',
+  },
+  deviceCardSelected: {
+    borderColor: '#22c55e',
+  },
+  deviceCardInfo: {
+    flex: 1,
+  },
+  deviceName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  deviceId: {
+    color: '#888',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  bluetoothNote: {
+    marginTop: 10,
+    color: '#f59e0b',
+    fontSize: 11,
+    fontStyle: 'italic',
   },
   simulationSection: {
     borderWidth: 1,
