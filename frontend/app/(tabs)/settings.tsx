@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -87,6 +88,29 @@ export default function SettingsScreen() {
     }
   };
 
+  const requestBluetoothPermissions = async () => {
+    if (Platform.OS !== 'android') return true;
+
+    try {
+      const permissions =
+        Platform.Version >= 31
+          ? [
+              PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+              PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+              PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+            ]
+          : [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+
+      const result = await PermissionsAndroid.requestMultiple(permissions);
+      return permissions.every(
+        (permission) => result[permission] === PermissionsAndroid.RESULTS.GRANTED
+      );
+    } catch (error) {
+      console.error('Bluetooth permissions error:', error);
+      return false;
+    }
+  };
+
   const handleScanBluetooth = async () => {
     if (!bluetoothClassicSupported) {
       Alert.alert(
@@ -100,20 +124,83 @@ export default function SettingsScreen() {
 
     setIsScanning(true);
     setDiscoveredDevices([]);
-    let foundCount = 0;
+    const foundDevices: ScanDevice[] = [];
+    let scanTimeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
-      await bluetoothTelemetryService.startScan((device) => {
-        foundCount += 1;
-        setDiscoveredDevices((prev) => [...prev, device]);
-      });
-      if (foundCount === 0) {
+      const hasPermissions = await requestBluetoothPermissions();
+      if (!hasPermissions) {
+        Alert.alert(
+          settings.language === 'es' ? 'Permisos requeridos' : 'Permissions required',
+          settings.language === 'es'
+            ? 'Activa permisos de Bluetooth y ubicación para buscar tu módulo HC-05.'
+            : 'Enable Bluetooth and location permissions to scan for your HC-05 module.'
+        );
+        return;
+      }
+
+      const scanResult = await Promise.race([
+        bluetoothTelemetryService.startScan((device) => {
+          foundDevices.push(device);
+          setDiscoveredDevices((prev) => [...prev, device]);
+        }).then(() => 'completed' as const),
+        new Promise<'timeout'>((resolve) => {
+          scanTimeoutId = setTimeout(() => resolve('timeout'), 120,000);
+        }),
+      ]);
+
+      if (scanResult === 'timeout' && foundDevices.length === 0) {
+        Alert.alert(
+          settings.language === 'es' ? 'Tiempo de búsqueda agotado' : 'Scan timeout',
+          settings.language === 'es'
+            ? 'Pasaron 3 minutos y no se encontraron dispositivos Bluetooth.'
+            : '3 minutes passed and no Bluetooth devices were found.'
+        );
+        return;
+      }
+
+      if (foundDevices.length === 0) {
         Alert.alert(
           settings.language === 'es' ? 'Sin dispositivos' : 'No devices found',
           settings.language === 'es'
             ? 'No se encontraron dispositivos Bluetooth cercanos.'
             : 'No nearby Bluetooth devices were found.'
         );
+        return;
       }
+
+      const priorityMatches = foundDevices.filter((device) =>
+        /(hc-?05|arduino|nano|gyro|giroscopio)/i.test(device.name)
+      );
+      const devicesToShow = priorityMatches.length > 0 ? priorityMatches : foundDevices;
+      const topDevices = devicesToShow.slice(0, 6);
+      const otherCount = devicesToShow.length - topDevices.length;
+
+      Alert.alert(
+        settings.language === 'es' ? 'Seleccionar dispositivo' : 'Select device',
+        settings.language === 'es'
+          ? 'Elige el Bluetooth del circuito (HC-05 / Arduino Nano) para conectar.'
+          : 'Pick the circuit Bluetooth device (HC-05 / Arduino Nano) to connect.',
+        [
+          ...topDevices.map((device) => ({
+            text: `${device.name}`,
+            onPress: () => handleConnectDevice(device),
+          })),
+          ...(otherCount > 0
+            ? [
+                {
+                  text:
+                    settings.language === 'es'
+                      ? `Ver más en la lista (${otherCount})`
+                      : `See more in list (${otherCount})`,
+                },
+              ]
+            : []),
+          {
+            text: settings.language === 'es' ? 'Cancelar' : 'Cancel',
+            style: 'cancel' as const,
+          },
+        ]
+      );
     } catch (error) {
       if (!isBluetoothUnavailableError(error)) {
         console.error('Bluetooth scan error:', error);
@@ -121,10 +208,17 @@ export default function SettingsScreen() {
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
         settings.language === 'es'
-          ? 'No se pudo iniciar el escaneo Bluetooth.'
-          : 'Could not start Bluetooth scan.'
+          ? `No se pudo iniciar el escaneo Bluetooth.${
+              error instanceof Error && error.message ? `\n\nDetalle: ${error.message}` : ''
+            }`
+          : `Could not start Bluetooth scan.${
+              error instanceof Error && error.message ? `\n\nDetails: ${error.message}` : ''
+            }`
       );
     } finally {
+      if (scanTimeoutId) {
+        clearTimeout(scanTimeoutId);
+      }
       setIsScanning(false);
     }
   };
