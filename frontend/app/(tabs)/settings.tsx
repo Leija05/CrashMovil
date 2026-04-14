@@ -100,20 +100,55 @@ export default function SettingsScreen() {
 
     setIsScanning(true);
     setDiscoveredDevices([]);
-    let foundCount = 0;
+    const foundDevices: ScanDevice[] = [];
     try {
       await bluetoothTelemetryService.startScan((device) => {
-        foundCount += 1;
+        foundDevices.push(device);
         setDiscoveredDevices((prev) => [...prev, device]);
       });
-      if (foundCount === 0) {
+      if (foundDevices.length === 0) {
         Alert.alert(
           settings.language === 'es' ? 'Sin dispositivos' : 'No devices found',
           settings.language === 'es'
             ? 'No se encontraron dispositivos Bluetooth cercanos.'
             : 'No nearby Bluetooth devices were found.'
         );
+        return;
       }
+
+      const priorityMatches = foundDevices.filter((device) =>
+        /(hc-?05|arduino|nano|gyro|giroscopio)/i.test(device.name)
+      );
+      const devicesToShow = priorityMatches.length > 0 ? priorityMatches : foundDevices;
+      const topDevices = devicesToShow.slice(0, 6);
+      const otherCount = devicesToShow.length - topDevices.length;
+
+      Alert.alert(
+        settings.language === 'es' ? 'Seleccionar dispositivo' : 'Select device',
+        settings.language === 'es'
+          ? 'Elige el Bluetooth del circuito (HC-05 / Arduino Nano) para conectar.'
+          : 'Pick the circuit Bluetooth device (HC-05 / Arduino Nano) to connect.',
+        [
+          ...topDevices.map((device) => ({
+            text: `${device.name}`,
+            onPress: () => handleConnectDevice(device),
+          })),
+          ...(otherCount > 0
+            ? [
+                {
+                  text:
+                    settings.language === 'es'
+                      ? `Ver más en la lista (${otherCount})`
+                      : `See more in list (${otherCount})`,
+                },
+              ]
+            : []),
+          {
+            text: settings.language === 'es' ? 'Cancelar' : 'Cancel',
+            style: 'cancel' as const,
+          },
+        ]
+      );
     } catch (error) {
       if (!isBluetoothUnavailableError(error)) {
         console.error('Bluetooth scan error:', error);
