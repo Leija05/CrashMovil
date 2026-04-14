@@ -125,6 +125,7 @@ export default function SettingsScreen() {
     setIsScanning(true);
     setDiscoveredDevices([]);
     const foundDevices: ScanDevice[] = [];
+    let scanTimeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const hasPermissions = await requestBluetoothPermissions();
       if (!hasPermissions) {
@@ -137,10 +138,26 @@ export default function SettingsScreen() {
         return;
       }
 
-      await bluetoothTelemetryService.startScan((device) => {
-        foundDevices.push(device);
-        setDiscoveredDevices((prev) => [...prev, device]);
-      });
+      const scanResult = await Promise.race([
+        bluetoothTelemetryService.startScan((device) => {
+          foundDevices.push(device);
+          setDiscoveredDevices((prev) => [...prev, device]);
+        }).then(() => 'completed' as const),
+        new Promise<'timeout'>((resolve) => {
+          scanTimeoutId = setTimeout(() => resolve('timeout'), 180000);
+        }),
+      ]);
+
+      if (scanResult === 'timeout' && foundDevices.length === 0) {
+        Alert.alert(
+          settings.language === 'es' ? 'Tiempo de búsqueda agotado' : 'Scan timeout',
+          settings.language === 'es'
+            ? 'Pasaron 3 minutos y no se encontraron dispositivos Bluetooth.'
+            : '3 minutes passed and no Bluetooth devices were found.'
+        );
+        return;
+      }
+
       if (foundDevices.length === 0) {
         Alert.alert(
           settings.language === 'es' ? 'Sin dispositivos' : 'No devices found',
@@ -199,6 +216,9 @@ export default function SettingsScreen() {
             }`
       );
     } finally {
+      if (scanTimeoutId) {
+        clearTimeout(scanTimeoutId);
+      }
       setIsScanning(false);
     }
   };
