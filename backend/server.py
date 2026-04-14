@@ -954,6 +954,17 @@ async def healthcheck() -> Dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/")
+async def app_root() -> Dict[str, str]:
+    return {
+        "message": "C.R.A.S.H. API",
+        "status": "ok",
+        "docs": "/docs",
+        "api_root": "/api/",
+        "api_health": "/api/health",
+    }
+
+
 # Settings
 @api_router.get("/settings", response_model=DeviceSettings)
 async def get_settings(current_user: User = Depends(get_current_user)) -> DeviceSettings:

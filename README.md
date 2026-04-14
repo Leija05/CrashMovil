@@ -19,6 +19,7 @@ Prueba rápida:
 
 ```bash
 curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1:8000/
 ```
 
 > Si vas a usar ngrok, abre otro terminal y ejecuta:
@@ -26,6 +27,8 @@ curl http://127.0.0.1:8000/api/health
 > ```bash
 > ngrok http 8000
 > ```
+>
+> Si abres la URL pública en el navegador (`https://...ngrok-free.dev/`) ahora debe responder JSON del backend.
 
 ### 2) Frontend (Expo)
 
