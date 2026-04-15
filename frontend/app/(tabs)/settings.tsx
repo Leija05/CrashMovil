@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Platform,
   PermissionsAndroid,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,7 +20,11 @@ import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
 import { settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
-import { bluetoothTelemetryService, ScanDevice } from '../../src/services/bluetooth';
+import {
+  bluetoothTelemetryService,
+  isBluetoothClassicAvailable,
+  ScanDevice,
+} from '../../src/services/bluetooth';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -43,6 +48,30 @@ export default function SettingsScreen() {
 
   const isBluetoothUnavailableError = (error: unknown) =>
     error instanceof Error && /bluetooth classic is unavailable/i.test(error.message);
+
+  const openPhoneBluetoothSettings = async () => {
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      console.error('Open settings error:', error);
+    }
+  };
+
+  const showBluetoothClassicSetupHelp = () => {
+    Alert.alert(
+      settings.language === 'es' ? 'Bluetooth clásico no disponible' : 'Classic Bluetooth unavailable',
+      settings.language === 'es'
+        ? 'Tu app actual no tiene el módulo nativo de Bluetooth clásico (HC-05). Si estás usando Expo Go, debes instalar una build de desarrollo (APK/AAB) de esta app para poder conectar el hardware.'
+        : 'Your current app build does not include the Classic Bluetooth native module (HC-05). If you are using Expo Go, install a development build (APK/AAB) of this app to connect hardware.',
+      [
+        {
+          text: settings.language === 'es' ? 'Abrir ajustes del teléfono' : 'Open phone settings',
+          onPress: () => openPhoneBluetoothSettings(),
+        },
+        { text: 'OK', style: 'cancel' },
+      ]
+    );
+  };
   
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
@@ -122,10 +151,13 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (!isBluetoothClassicAvailable()) {
+      showBluetoothClassicSetupHelp();
+      return;
+    }
+
     setIsScanning(true);
     setDiscoveredDevices([]);
-    const foundDevices: ScanDevice[] = [];
-    let scanTimeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
       const hasPermissions = await requestBluetoothPermissions();
       if (!hasPermissions) {
@@ -138,38 +170,21 @@ export default function SettingsScreen() {
         return;
       }
 
-      const scanResult = await Promise.race([
-        bluetoothTelemetryService.startScan((device) => {
-          foundDevices.push(device);
-          setDiscoveredDevices((prev) => [...prev, device]);
-        }).then(() => 'completed' as const),
-        new Promise<'timeout'>((resolve) => {
-          scanTimeoutId = setTimeout(() => resolve('timeout'), 120,000);
-        }),
-      ]);
-
-      if (scanResult === 'timeout' && foundDevices.length === 0) {
-        Alert.alert(
-          settings.language === 'es' ? 'Tiempo de búsqueda agotado' : 'Scan timeout',
-          settings.language === 'es'
-            ? 'Pasaron 3 minutos y no se encontraron dispositivos Bluetooth.'
-            : '3 minutes passed and no Bluetooth devices were found.'
-        );
-        return;
-      }
+      const foundDevices = await bluetoothTelemetryService.findDevices(20000);
+      setDiscoveredDevices(foundDevices);
 
       if (foundDevices.length === 0) {
         Alert.alert(
-          settings.language === 'es' ? 'Sin dispositivos' : 'No devices found',
+          settings.language === 'es' ? 'Sin coincidencias' : 'No matches found',
           settings.language === 'es'
-            ? 'No se encontraron dispositivos Bluetooth cercanos.'
-            : 'No nearby Bluetooth devices were found.'
+            ? 'No se encontraron dispositivos. Primero empareja el hardware (HC-05) en Ajustes Bluetooth del teléfono y vuelve a intentar.'
+            : 'No devices found. First pair your hardware (HC-05) in your phone Bluetooth settings, then try again.'
         );
         return;
       }
 
       const priorityMatches = foundDevices.filter((device) =>
-        /(hc-?05|arduino|nano|gyro|giroscopio)/i.test(device.name)
+        /(hc-?0[56]|arduino|nano|gyro|giroscopio|linvor|bt)/i.test(device.name)
       );
       const devicesToShow = priorityMatches.length > 0 ? priorityMatches : foundDevices;
       const topDevices = devicesToShow.slice(0, 6);
@@ -178,8 +193,8 @@ export default function SettingsScreen() {
       Alert.alert(
         settings.language === 'es' ? 'Seleccionar dispositivo' : 'Select device',
         settings.language === 'es'
-          ? 'Elige el Bluetooth del circuito (HC-05 / Arduino Nano) para conectar.'
-          : 'Pick the circuit Bluetooth device (HC-05 / Arduino Nano) to connect.',
+          ? 'Selecciona el Bluetooth del hardware ya emparejado o detectado.'
+          : 'Select the hardware Bluetooth device that is already paired or detected.',
         [
           ...topDevices.map((device) => ({
             text: `${device.name}`,
@@ -202,9 +217,11 @@ export default function SettingsScreen() {
         ]
       );
     } catch (error) {
-      if (!isBluetoothUnavailableError(error)) {
-        console.error('Bluetooth scan error:', error);
+      if (isBluetoothUnavailableError(error)) {
+        showBluetoothClassicSetupHelp();
+        return;
       }
+      console.error('Bluetooth scan error:', error);
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
         settings.language === 'es'
@@ -216,9 +233,6 @@ export default function SettingsScreen() {
             }`
       );
     } finally {
-      if (scanTimeoutId) {
-        clearTimeout(scanTimeoutId);
-      }
       setIsScanning(false);
     }
   };
@@ -291,8 +305,8 @@ export default function SettingsScreen() {
           </View>
           <Text style={[styles.sectionSubtitle, isDark ? { color: '#888' } : { color: '#666' }]}>
             {settings.language === 'es'
-              ? 'Escanea y vincula tu módulo Bluetooth (HC-05) para recibir telemetría real.'
-              : 'Scan and pair your Bluetooth module (HC-05) to receive real telemetry.'}
+              ? 'Empareja primero el HC-05 en el teléfono. Luego usa este botón para ver coincidencias por nombre y conectar.'
+              : 'Pair HC-05 in your phone first. Then use this button to see name matches and connect.'}
           </Text>
           {!bluetoothClassicSupported && (
             <Text style={[styles.sectionSubtitle, { color: '#f59e0b', marginTop: 6 }]}>
@@ -309,8 +323,8 @@ export default function SettingsScreen() {
             <Ionicons name="bluetooth" size={18} color="#fff" />
             <Text style={styles.scanButtonText}>
               {isScanning
-                ? (settings.language === 'es' ? 'Buscando...' : 'Scanning...')
-                : (settings.language === 'es' ? 'Buscar dispositivos' : 'Scan devices')}
+                ? (settings.language === 'es' ? 'Buscando coincidencias...' : 'Finding matches...')
+                : (settings.language === 'es' ? 'Buscar y conectar Bluetooth' : 'Find & connect Bluetooth')}
             </Text>
           </TouchableOpacity>
 
