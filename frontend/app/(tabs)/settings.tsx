@@ -11,6 +11,7 @@ import {
   ActivityIndicator,
   Platform,
   PermissionsAndroid,
+  Linking,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,7 +20,11 @@ import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
 import { settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
-import { bluetoothTelemetryService, ScanDevice } from '../../src/services/bluetooth';
+import {
+  bluetoothTelemetryService,
+  isBluetoothClassicAvailable,
+  ScanDevice,
+} from '../../src/services/bluetooth';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -43,6 +48,30 @@ export default function SettingsScreen() {
 
   const isBluetoothUnavailableError = (error: unknown) =>
     error instanceof Error && /bluetooth classic is unavailable/i.test(error.message);
+
+  const openPhoneBluetoothSettings = async () => {
+    try {
+      await Linking.openSettings();
+    } catch (error) {
+      console.error('Open settings error:', error);
+    }
+  };
+
+  const showBluetoothClassicSetupHelp = () => {
+    Alert.alert(
+      settings.language === 'es' ? 'Bluetooth clásico no disponible' : 'Classic Bluetooth unavailable',
+      settings.language === 'es'
+        ? 'Tu app actual no tiene el módulo nativo de Bluetooth clásico (HC-05). Si estás usando Expo Go, debes instalar una build de desarrollo (APK/AAB) de esta app para poder conectar el hardware.'
+        : 'Your current app build does not include the Classic Bluetooth native module (HC-05). If you are using Expo Go, install a development build (APK/AAB) of this app to connect hardware.',
+      [
+        {
+          text: settings.language === 'es' ? 'Abrir ajustes del teléfono' : 'Open phone settings',
+          onPress: () => openPhoneBluetoothSettings(),
+        },
+        { text: 'OK', style: 'cancel' },
+      ]
+    );
+  };
   
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
@@ -122,6 +151,11 @@ export default function SettingsScreen() {
       return;
     }
 
+    if (!isBluetoothClassicAvailable()) {
+      showBluetoothClassicSetupHelp();
+      return;
+    }
+
     setIsScanning(true);
     setDiscoveredDevices([]);
     try {
@@ -183,9 +217,11 @@ export default function SettingsScreen() {
         ]
       );
     } catch (error) {
-      if (!isBluetoothUnavailableError(error)) {
-        console.error('Bluetooth scan error:', error);
+      if (isBluetoothUnavailableError(error)) {
+        showBluetoothClassicSetupHelp();
+        return;
       }
+      console.error('Bluetooth scan error:', error);
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth Error',
         settings.language === 'es'

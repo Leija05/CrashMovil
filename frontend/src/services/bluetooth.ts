@@ -20,6 +20,8 @@ const createBluetoothUnavailableError = () =>
     'Bluetooth Classic is unavailable. Install and configure react-native-bluetooth-classic on Android to use this feature.'
   );
 
+let bluetoothClassicAvailable = true;
+
 const loadBluetoothClassic = (): BluetoothClassicModule => {
   try {
     // Use eval to avoid Metro trying to statically resolve this optional dependency
@@ -29,6 +31,7 @@ const loadBluetoothClassic = (): BluetoothClassicModule => {
 
     return (module?.default ?? module) as BluetoothClassicModule;
   } catch {
+    bluetoothClassicAvailable = false;
     return {
       requestBluetoothEnabled: async () => {
         throw createBluetoothUnavailableError();
@@ -46,6 +49,7 @@ const loadBluetoothClassic = (): BluetoothClassicModule => {
 };
 
 const BluetoothClassic = loadBluetoothClassic();
+export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
 
 const normalizeDevice = (device: any): ScanDevice | null => {
   if (!device?.id) return null;
