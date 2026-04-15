@@ -1,4 +1,7 @@
+import { PermissionsAndroid, Platform } from 'react-native';
 import { TelemetryData } from '../store/crashStore';
+
+// --- Interfaces y Tipos ---
 
 export interface ScanDevice {
   id: string;
@@ -6,44 +9,40 @@ export interface ScanDevice {
 }
 
 type BluetoothClassicModule = {
-  requestBluetoothEnabled: () => Promise<void>;
+  requestBluetoothEnabled: () => Promise<boolean>;
+  isBluetoothEnabled: () => Promise<boolean>;
   startDiscovery: () => Promise<any[]>;
   connectToDevice: (deviceId: string, options?: Record<string, unknown>) => Promise<any>;
-  onDataReceived: (handler: (event: any) => void) => () => void;
+  onDataReceived: (handler: (event: any) => void) => { remove: () => void };
   disconnectFromDevice: (deviceId: string) => Promise<void>;
-  getBondedDevices?: () => Promise<any[]>;
-  cancelDiscovery?: () => Promise<void>;
+  getBondedDevices: () => Promise<any[]>;
+  cancelDiscovery: () => Promise<void>;
 };
 
+// --- Configuración de Carga Dinámica ---
+
 const createBluetoothUnavailableError = () =>
-  new Error(
-    'Bluetooth Classic is unavailable. Install and configure react-native-bluetooth-classic on Android to use this feature.'
-  );
+  new Error('Bluetooth Classic no disponible. Revisa la configuración nativa en Android.');
 
 let bluetoothClassicAvailable = true;
 
 const loadBluetoothClassic = (): BluetoothClassicModule => {
   try {
-    // Use eval to avoid Metro trying to statically resolve this optional dependency
-    // in platforms/builds where it is not installed.
+    // Evita que Metro explote si la librería no está vinculada nativamente
     const dynamicRequire = eval('require') as (moduleName: string) => any;
     const module = dynamicRequire('react-native-bluetooth-classic');
-
     return (module?.default ?? module) as BluetoothClassicModule;
   } catch {
     bluetoothClassicAvailable = false;
     return {
-      requestBluetoothEnabled: async () => {
-        throw createBluetoothUnavailableError();
-      },
-      startDiscovery: async () => {
-        throw createBluetoothUnavailableError();
-      },
-      connectToDevice: async () => {
-        throw createBluetoothUnavailableError();
-      },
-      onDataReceived: () => () => undefined,
+      requestBluetoothEnabled: async () => { throw createBluetoothUnavailableError(); },
+      isBluetoothEnabled: async () => false,
+      startDiscovery: async () => { throw createBluetoothUnavailableError(); },
+      connectToDevice: async () => { throw createBluetoothUnavailableError(); },
+      onDataReceived: () => ({ remove: () => undefined }),
       disconnectFromDevice: async () => undefined,
+      getBondedDevices: async () => [],
+      cancelDiscovery: async () => undefined,
     };
   }
 };
@@ -51,30 +50,23 @@ const loadBluetoothClassic = (): BluetoothClassicModule => {
 const BluetoothClassic = loadBluetoothClassic();
 export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
 
+// --- Funciones Auxiliares de Procesamiento ---
+
 const normalizeDevice = (device: any): ScanDevice | null => {
   if (!device?.id) return null;
   return {
     id: String(device.id),
-    name: (device.name || `HC05-${String(device.id).slice(-4)}`).trim(),
+    name: (device.name || `HC-05 [${String(device.id).slice(-4)}]`).trim(),
   };
 };
 
-const dedupeDevices = (devices: ScanDevice[]) => {
-  const unique = new Map<string, ScanDevice>();
-  devices.forEach((device) => {
-    if (!unique.has(device.id)) {
-      unique.set(device.id, device);
-    }
-  });
-  return Array.from(unique.values());
-};
-
 const parseTelemetry = (payload: string): TelemetryData | null => {
-  const cleanedPayload = payload.trim();
-  if (!cleanedPayload) return null;
+  const cleaned = payload.trim();
+  if (!cleaned) return null;
 
   try {
-    const parsed = JSON.parse(cleanedPayload);
+    // Intento 1: JSON
+    const parsed = JSON.parse(cleaned);
     return {
       acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
       acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
@@ -82,117 +74,143 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
       gyro_x: Number(parsed.gyro_x ?? parsed.gx ?? 0),
       gyro_y: Number(parsed.gyro_y ?? parsed.gy ?? 0),
       gyro_z: Number(parsed.gyro_z ?? parsed.gz ?? 0),
-      g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
+      g_force: Number(parsed.g_force ?? parsed.g ?? 0),
     };
   } catch {
-    // ignore and fallback to CSV parsing
+    // Intento 2: CSV (ax, ay, az, gx, gy, gz, gforce)
+    const parts = cleaned.split(',').map(v => Number(v.trim()));
+    if (parts.length >= 7 && !parts.some(isNaN)) {
+      return {
+        acceleration_x: parts[0],
+        acceleration_y: parts[1],
+        acceleration_z: parts[2],
+        gyro_x: parts[3],
+        gyro_y: parts[4],
+        gyro_z: parts[5],
+        g_force: parts[6],
+      };
+    }
   }
-
-  const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
-  if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) {
-    return null;
-  }
-
-  return {
-    acceleration_x: parts[0],
-    acceleration_y: parts[1],
-    acceleration_z: parts[2],
-    gyro_x: parts[3],
-    gyro_y: parts[4],
-    gyro_z: parts[5],
-    g_force: parts[6],
-  };
+  return null;
 };
 
+// --- Clase de Servicio Principal ---
+
 class BluetoothTelemetryService {
-  private removeDataListener: (() => void) | null = null;
+  private dataSubscription: { remove: () => void } | null = null;
   private connectedDeviceId: string | null = null;
+  private dataBuffer: string = '';
 
-  private async getBondedDevices(): Promise<ScanDevice[]> {
-    if (!BluetoothClassic.getBondedDevices) return [];
-    const bonded = await BluetoothClassic.getBondedDevices();
-    const list = Array.isArray(bonded) ? bonded : [];
-    return list
-      .map((device: any) => normalizeDevice(device))
-      .filter((device: ScanDevice | null): device is ScanDevice => device !== null);
-  }
+  /**
+   * Solicita permisos necesarios según la versión de Android
+   */
+  private async requestPermissions(): Promise<boolean> {
+    if (Platform.OS !== 'android') return true;
 
-  private async getDiscoveredDevices(timeoutMs = 20000): Promise<ScanDevice[]> {
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-    try {
-      const result = await Promise.race([
-        BluetoothClassic.startDiscovery(),
-        new Promise<'timeout'>((resolve) => {
-          timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
-        }),
+    const apiLevel = typeof Platform.Version === 'number' ? Platform.Version : parseInt(Platform.Version, 10);
+
+    if (apiLevel >= 31) {
+      const granted = await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
       ]);
-
-      if (result === 'timeout') {
-        if (BluetoothClassic.cancelDiscovery) {
-          await BluetoothClassic.cancelDiscovery().catch(() => undefined);
-        }
-        return [];
-      }
-
-      const list = Array.isArray(result) ? result : [];
-      return list
-        .map((device: any) => normalizeDevice(device))
-        .filter((device: ScanDevice | null): device is ScanDevice => device !== null);
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
+      return (
+        granted['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
+        granted['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED
+      );
+    } else {
+      const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
     }
   }
 
-  async findDevices(timeoutMs = 20000): Promise<ScanDevice[]> {
+  /**
+   * Busca dispositivos vinculados y disponibles
+   */
+  async findDevices(timeoutMs = 15000): Promise<ScanDevice[]> {
+    const hasPermission = await this.requestPermissions();
+    if (!hasPermission) throw new Error('Permisos de Bluetooth denegados.');
+
     await BluetoothClassic.requestBluetoothEnabled();
-    const [bondedDevices, discoveredDevices] = await Promise.all([
-      this.getBondedDevices().catch(() => []),
-      this.getDiscoveredDevices(timeoutMs),
-    ]);
-    return dedupeDevices([...bondedDevices, ...discoveredDevices]);
+
+    try {
+      // Obtenemos vinculados y escaneamos nuevos en paralelo
+      const [bonded, discovered] = await Promise.all([
+        BluetoothClassic.getBondedDevices().catch(() => []),
+        Promise.race([
+          BluetoothClassic.startDiscovery(),
+          new Promise<any[]>((_, reject) => setTimeout(() => reject('timeout'), timeoutMs))
+        ]).catch(err => {
+          if (err === 'timeout') BluetoothClassic.cancelDiscovery();
+          return [];
+        })
+      ]);
+
+      const allDevices = [...bonded, ...discovered]
+        .map(normalizeDevice)
+        .filter((d): d is ScanDevice => d !== null);
+
+      // Eliminar duplicados por ID
+      return Array.from(new Map(allDevices.map(d => [d.id, d])).values());
+    } catch (error) {
+      console.error('Error al buscar dispositivos:', error);
+      return [];
+    }
   }
 
-  async startScan(onDeviceFound: (device: ScanDevice) => void): Promise<void> {
-    const devices = await this.findDevices();
-    devices.forEach((device) => onDeviceFound(device));
-  }
-
-  async connect(deviceId: string, onTelemetry: (telemetry: TelemetryData) => void): Promise<ScanDevice> {
+  /**
+   * Se conecta a un dispositivo e inicia la escucha de telemetría
+   */
+  async connect(deviceId: string, onTelemetry: (data: TelemetryData) => void): Promise<void> {
     this.disconnect();
 
-    const device = await BluetoothClassic.connectToDevice(deviceId, {
-      delimiter: '\n',
-      deviceCharset: 'utf-8',
-    });
+    try {
+      const device = await BluetoothClassic.connectToDevice(deviceId, {
+        delimiter: '\n',
+        deviceCharset: 'utf-8',
+      });
 
-    this.connectedDeviceId = device?.id ?? deviceId;
+      this.connectedDeviceId = deviceId;
+      this.dataBuffer = '';
 
-    this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
-      const message: string = event?.data ?? '';
-      const telemetry = parseTelemetry(message);
-      if (telemetry) {
-        onTelemetry(telemetry);
-      }
-    });
+      // Suscripción a datos con manejo de Buffer
+      this.dataSubscription = BluetoothClassic.onDataReceived((event) => {
+        const rawData: string = event?.data ?? '';
+        this.dataBuffer += rawData;
 
-    return {
-      id: this.connectedDeviceId,
-      name: (device?.name || `HC05-${String(this.connectedDeviceId).slice(-4)}`).trim(),
-    };
+        if (this.dataBuffer.includes('\n')) {
+          const lines = this.dataBuffer.split('\n');
+          // El último elemento puede estar incompleto, lo guardamos para el siguiente ciclo
+          this.dataBuffer = lines.pop() || '';
+
+          lines.forEach(line => {
+            const telemetry = parseTelemetry(line);
+            if (telemetry) onTelemetry(telemetry);
+          });
+        }
+      });
+
+      console.log(`Conectado exitosamente a: ${deviceId}`);
+    } catch (error) {
+      this.disconnect();
+      throw new Error(`Error de conexión: ${error}`);
+    }
   }
 
+  /**
+   * Finaliza la conexión y limpia suscripciones
+   */
   disconnect() {
-    if (this.removeDataListener) {
-      this.removeDataListener();
-      this.removeDataListener = null;
+    if (this.dataSubscription) {
+      this.dataSubscription.remove();
+      this.dataSubscription = null;
     }
 
     if (this.connectedDeviceId) {
       BluetoothClassic.disconnectFromDevice(this.connectedDeviceId).catch(() => undefined);
       this.connectedDeviceId = null;
     }
+    this.dataBuffer = '';
   }
 }
 
