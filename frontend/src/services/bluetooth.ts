@@ -139,7 +139,7 @@ class BluetoothTelemetryService {
     // 1. Solicitar permisos de Android en tiempo de ejecución
     if (Platform.OS === 'android') {
       const version = typeof Platform.Version === 'number' ? Platform.Version : parseInt(Platform.Version as string, 10);
-      
+
       if (version >= 31) { // Android 12 o superior
         const granted = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
@@ -181,9 +181,13 @@ class BluetoothTelemetryService {
     const device = await BluetoothClassic.connectToDevice(deviceId, {
       delimiter: '\n',
       deviceCharset: 'utf-8',
+      connectorType: 'rfcomm',
+      secure: false,
     });
 
     this.connectedDeviceId = device?.id ?? deviceId;
+
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
       const message: string = event?.data ?? '';
