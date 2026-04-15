@@ -11,6 +11,8 @@ type BluetoothClassicModule = {
   connectToDevice: (deviceId: string, options?: Record<string, unknown>) => Promise<any>;
   onDataReceived: (handler: (event: any) => void) => () => void;
   disconnectFromDevice: (deviceId: string) => Promise<void>;
+  getBondedDevices?: () => Promise<any[]>;
+  cancelDiscovery?: () => Promise<void>;
 };
 
 const createBluetoothUnavailableError = () =>
@@ -44,6 +46,24 @@ const loadBluetoothClassic = (): BluetoothClassicModule => {
 };
 
 const BluetoothClassic = loadBluetoothClassic();
+
+const normalizeDevice = (device: any): ScanDevice | null => {
+  if (!device?.id) return null;
+  return {
+    id: String(device.id),
+    name: (device.name || `HC05-${String(device.id).slice(-4)}`).trim(),
+  };
+};
+
+const dedupeDevices = (devices: ScanDevice[]) => {
+  const unique = new Map<string, ScanDevice>();
+  devices.forEach((device) => {
+    if (!unique.has(device.id)) {
+      unique.set(device.id, device);
+    }
+  });
+  return Array.from(unique.values());
+};
 
 const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
@@ -84,19 +104,55 @@ class BluetoothTelemetryService {
   private removeDataListener: (() => void) | null = null;
   private connectedDeviceId: string | null = null;
 
-  async startScan(onDeviceFound: (device: ScanDevice) => void): Promise<void> {
+  private async getBondedDevices(): Promise<ScanDevice[]> {
+    if (!BluetoothClassic.getBondedDevices) return [];
+    const bonded = await BluetoothClassic.getBondedDevices();
+    const list = Array.isArray(bonded) ? bonded : [];
+    return list
+      .map((device: any) => normalizeDevice(device))
+      .filter((device: ScanDevice | null): device is ScanDevice => device !== null);
+  }
+
+  private async getDiscoveredDevices(timeoutMs = 20000): Promise<ScanDevice[]> {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    try {
+      const result = await Promise.race([
+        BluetoothClassic.startDiscovery(),
+        new Promise<'timeout'>((resolve) => {
+          timeoutHandle = setTimeout(() => resolve('timeout'), timeoutMs);
+        }),
+      ]);
+
+      if (result === 'timeout') {
+        if (BluetoothClassic.cancelDiscovery) {
+          await BluetoothClassic.cancelDiscovery().catch(() => undefined);
+        }
+        return [];
+      }
+
+      const list = Array.isArray(result) ? result : [];
+      return list
+        .map((device: any) => normalizeDevice(device))
+        .filter((device: ScanDevice | null): device is ScanDevice => device !== null);
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+    }
+  }
+
+  async findDevices(timeoutMs = 20000): Promise<ScanDevice[]> {
     await BluetoothClassic.requestBluetoothEnabled();
+    const [bondedDevices, discoveredDevices] = await Promise.all([
+      this.getBondedDevices().catch(() => []),
+      this.getDiscoveredDevices(timeoutMs),
+    ]);
+    return dedupeDevices([...bondedDevices, ...discoveredDevices]);
+  }
 
-    const devices = await BluetoothClassic.startDiscovery();
-    const list = Array.isArray(devices) ? devices : [];
-
-    list.forEach((device: any) => {
-      if (!device?.id) return;
-      onDeviceFound({
-        id: device.id,
-        name: (device.name || `HC05-${String(device.id).slice(-4)}`).trim(),
-      });
-    });
+  async startScan(onDeviceFound: (device: ScanDevice) => void): Promise<void> {
+    const devices = await this.findDevices();
+    devices.forEach((device) => onDeviceFound(device));
   }
 
   async connect(deviceId: string, onTelemetry: (telemetry: TelemetryData) => void): Promise<ScanDevice> {
