@@ -5,7 +5,6 @@ import {
   StyleSheet,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
   RefreshControl,
   Alert,
   Animated,
@@ -20,8 +19,6 @@ import { impactsApi, contactsApi, settingsApi, statsApi } from '../../src/servic
 import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { EmergencyModal } from '../../src/components/EmergencyModal';
 import { CrashLogo } from '../../src/components/CrashLogo';
-
-const { width } = Dimensions.get('window');
 
 // ============================================================
 // SIMULATION MODE - Replace with Bluetooth when hardware ready
@@ -79,25 +76,7 @@ export default function HomeScreen() {
   
   const simulationInterval = useRef<NodeJS.Timeout | null>(null);
   
-  useEffect(() => {
-    if (user) {
-      loadData();
-    } else {
-      setContacts([]);
-      setImpacts([]);
-      setStats({ total_impacts: 0, real_impacts: 0, false_alarms: 0 });
-    }
-    requestLocationPermission();
-    startEntranceAnimations();
-    
-    return () => {
-      if (simulationInterval.current) {
-        clearInterval(simulationInterval.current);
-      }
-    };
-  }, [user]);
-  
-  const startEntranceAnimations = () => {
+  const startEntranceAnimations = useCallback(() => {
     Animated.parallel([
       Animated.timing(titleAnim, {
         toValue: 1,
@@ -113,20 +92,9 @@ export default function HomeScreen() {
         useNativeDriver: true,
       }),
     ]).start();
-  };
+  }, [cardAnim, titleAnim]);
   
-  useEffect(() => {
-    if (isSimulationMode) {
-      startSimulation();
-      setConnected(true);
-    } else {
-      stopSimulation();
-    }
-    
-    return () => stopSimulation();
-  }, [isSimulationMode]);
-  
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!user) return;
     try {
       const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
@@ -143,9 +111,9 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Error loading data:', error);
     }
-  };
+  }, [setContacts, setImpacts, setSettings, user]);
   
-  const requestLocationPermission = async () => {
+  const requestLocationPermission = useCallback(async () => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status === 'granted') {
@@ -158,9 +126,16 @@ export default function HomeScreen() {
     } catch (error) {
       console.error('Location error:', error);
     }
-  };
+  }, [setCurrentLocation]);
   
-  const startSimulation = () => {
+  const stopSimulation = useCallback(() => {
+    if (simulationInterval.current) {
+      clearInterval(simulationInterval.current);
+      simulationInterval.current = null;
+    }
+  }, []);
+
+  const startSimulation = useCallback(() => {
     if (simulationInterval.current) return;
     
     simulationInterval.current = setInterval(() => {
@@ -174,14 +149,36 @@ export default function HomeScreen() {
         g: [...prev.g.slice(-19), newTelemetry.g_force],
       }));
     }, 500);
-  };
-  
-  const stopSimulation = () => {
-    if (simulationInterval.current) {
-      clearInterval(simulationInterval.current);
-      simulationInterval.current = null;
+  }, [setTelemetry]);
+
+  useEffect(() => {
+    if (user) {
+      loadData();
+    } else {
+      setContacts([]);
+      setImpacts([]);
+      setStats({ total_impacts: 0, real_impacts: 0, false_alarms: 0 });
     }
-  };
+    requestLocationPermission();
+    startEntranceAnimations();
+    
+    return () => {
+      if (simulationInterval.current) {
+        clearInterval(simulationInterval.current);
+      }
+    };
+  }, [loadData, requestLocationPermission, setContacts, setImpacts, startEntranceAnimations, user]);
+
+  useEffect(() => {
+    if (isSimulationMode) {
+      startSimulation();
+      setConnected(true);
+    } else {
+      stopSimulation();
+    }
+    
+    return () => stopSimulation();
+  }, [isSimulationMode, setConnected, startSimulation, stopSimulation]);
   
   const simulateImpact = async () => {
     const severities = ['low', 'medium', 'high', 'critical'] as const;
@@ -253,7 +250,7 @@ export default function HomeScreen() {
       await loadData();
     }
     setRefreshing(false);
-  }, [user]);
+  }, [loadData, user]);
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -33,11 +33,7 @@ export default function DiagnosisScreen() {
   const severityParam = typeof params.severity === 'string' ? params.severity : 'low';
   const gForceValue = safeNumber(params.gForce);
   
-  useEffect(() => {
-    fetchDiagnosis();
-  }, []);
-  
-  const fetchDiagnosis = async () => {
+  const fetchDiagnosis = useCallback(async () => {
     setLoading(true);
     setError(null);
     
@@ -91,7 +87,11 @@ export default function DiagnosisScreen() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [gForceValue, params.accelerationX, params.accelerationY, params.accelerationZ, params.gyroX, params.gyroY, params.gyroZ, profile?.allergies, profile?.blood_type, profile?.medical_conditions, settings.language, user]);
+
+  useEffect(() => {
+    fetchDiagnosis();
+  }, [fetchDiagnosis]);
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {
