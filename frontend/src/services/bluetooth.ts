@@ -94,6 +94,8 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   };
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 class BluetoothTelemetryService {
   private removeDataListener: (() => void) | null = null;
   private connectedDeviceId: string | null = null;
@@ -175,19 +177,57 @@ class BluetoothTelemetryService {
     devices.forEach((device) => onDeviceFound(device));
   }
 
-  async connect(deviceId: string, onTelemetry: (telemetry: TelemetryData) => void): Promise<ScanDevice> {
-    this.disconnect();
+  private async disconnectCurrentConnection(): Promise<void> {
+    if (this.removeDataListener) {
+      this.removeDataListener();
+      this.removeDataListener = null;
+    }
 
-    const device = await BluetoothClassic.connectToDevice(deviceId, {
-      delimiter: '\n',
-      deviceCharset: 'utf-8',
-      connectorType: 'rfcomm',
-      secure: false,
-    });
+    if (!this.connectedDeviceId) return;
+
+    const previousId = this.connectedDeviceId;
+    this.connectedDeviceId = null;
+    await BluetoothClassic.disconnectFromDevice(previousId).catch(() => undefined);
+    await sleep(250);
+  }
+
+  async connect(deviceId: string, onTelemetry: (telemetry: TelemetryData) => void): Promise<ScanDevice> {
+    await this.disconnectCurrentConnection();
+    await BluetoothClassic.requestBluetoothEnabled();
+    if (BluetoothClassic.cancelDiscovery) {
+      await BluetoothClassic.cancelDiscovery().catch(() => undefined);
+    }
+    await sleep(300);
+
+    const connectionAttempts = [
+      { delimiter: '\n', deviceCharset: 'utf-8', connectorType: 'rfcomm', secure: false },
+      { delimiter: '\n', deviceCharset: 'utf-8', connectorType: 'rfcomm', secure: true },
+      { delimiter: '\n', deviceCharset: 'utf-8', secure: false },
+    ];
+
+    let lastError: unknown;
+    let device: any = null;
+
+    for (const options of connectionAttempts) {
+      try {
+        device = await BluetoothClassic.connectToDevice(deviceId, options);
+        break;
+      } catch (error) {
+        lastError = error;
+        await sleep(400);
+      }
+    }
+
+    if (!device) {
+      const reason = lastError instanceof Error ? lastError.message : 'unknown';
+      throw new Error(
+        `No se pudo establecer la conexión Bluetooth (SPP). Verifica emparejamiento, PIN y que ningún otro dispositivo esté conectado. Detalle: ${reason}`
+      );
+    }
 
     this.connectedDeviceId = device?.id ?? deviceId;
 
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await sleep(500);
 
     this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
       const message: string = event?.data ?? '';
@@ -204,15 +244,7 @@ class BluetoothTelemetryService {
   }
 
   disconnect() {
-    if (this.removeDataListener) {
-      this.removeDataListener();
-      this.removeDataListener = null;
-    }
-
-    if (this.connectedDeviceId) {
-      BluetoothClassic.disconnectFromDevice(this.connectedDeviceId).catch(() => undefined);
-      this.connectedDeviceId = null;
-    }
+    this.disconnectCurrentConnection().catch(() => undefined);
   }
 }
 
