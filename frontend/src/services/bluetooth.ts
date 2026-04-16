@@ -6,6 +6,16 @@ export interface ScanDevice {
   name: string;
 }
 
+const HARDWARE_NAME_PATTERNS = [
+  /hc-?0[56]/i,
+  /linvor/i,
+  /bt[_-]?module/i,
+  /casco/i,
+  /crash/i,
+  /arduino/i,
+  /gyro/i,
+];
+
 const createBluetoothUnavailableError = () =>
   new Error(
     'Bluetooth Classic is unavailable. Asegúrate de compilar la app nativa y no usar Expo Go.'
@@ -59,39 +69,98 @@ const dedupeDevices = (devices: ScanDevice[]) => {
   return Array.from(unique.values());
 };
 
+const normalizeName = (value?: string | null) => (value || '').trim().toLowerCase();
+
+const matchesHardwareName = (deviceName: string, preferredNames: string[] = []) => {
+  const normalizedDeviceName = normalizeName(deviceName);
+  if (!normalizedDeviceName) return false;
+
+  const normalizedPreferred = preferredNames
+    .map((name) => normalizeName(name))
+    .filter(Boolean);
+
+  if (normalizedPreferred.some((target) => normalizedDeviceName === target)) return true;
+  if (normalizedPreferred.some((target) => normalizedDeviceName.includes(target) || target.includes(normalizedDeviceName))) {
+    return true;
+  }
+
+  return HARDWARE_NAME_PATTERNS.some((pattern) => pattern.test(deviceName));
+};
+
 const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
 
   try {
     const parsed = JSON.parse(cleanedPayload);
+    const ax = Number(parsed.acceleration_x ?? parsed.ax ?? parsed.accel_x ?? parsed.acx ?? 0);
+    const ay = Number(parsed.acceleration_y ?? parsed.ay ?? parsed.accel_y ?? parsed.acy ?? 0);
+    const az = Number(parsed.acceleration_z ?? parsed.az ?? parsed.accel_z ?? parsed.acz ?? 0);
+    const gx = Number(parsed.gyro_x ?? parsed.gx ?? parsed.roll ?? 0);
+    const gy = Number(parsed.gyro_y ?? parsed.gy ?? parsed.pitch ?? 0);
+    const gz = Number(parsed.gyro_z ?? parsed.gz ?? parsed.yaw ?? 0);
+    const calculatedG = Math.sqrt(ax ** 2 + ay ** 2 + az ** 2);
+
     return {
-      acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
-      acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
-      acceleration_z: Number(parsed.acceleration_z ?? parsed.az ?? 0),
-      gyro_x: Number(parsed.gyro_x ?? parsed.gx ?? 0),
-      gyro_y: Number(parsed.gyro_y ?? parsed.gy ?? 0),
-      gyro_z: Number(parsed.gyro_z ?? parsed.gz ?? 0),
-      g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
+      acceleration_x: ax,
+      acceleration_y: ay,
+      acceleration_z: az,
+      gyro_x: gx,
+      gyro_y: gy,
+      gyro_z: gz,
+      g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? calculatedG ?? 0),
     };
   } catch {
     // ignore and fallback to CSV parsing
   }
 
-  const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
-  if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) {
-    return null;
+  const parts = cleanedPayload
+    .split(/[,\s;|]+/)
+    .map((value) => Number(value.trim()))
+    .filter((value) => !Number.isNaN(value));
+
+  if (parts.length >= 7) {
+    return {
+      acceleration_x: parts[0],
+      acceleration_y: parts[1],
+      acceleration_z: parts[2],
+      gyro_x: parts[3],
+      gyro_y: parts[4],
+      gyro_z: parts[5],
+      g_force: parts[6],
+    };
   }
 
-  return {
-    acceleration_x: parts[0],
-    acceleration_y: parts[1],
-    acceleration_z: parts[2],
-    gyro_x: parts[3],
-    gyro_y: parts[4],
-    gyro_z: parts[5],
-    g_force: parts[6],
-  };
+  if (parts.length === 6) {
+    const [ax, ay, az, gx, gy, gz] = parts;
+    return {
+      acceleration_x: ax,
+      acceleration_y: ay,
+      acceleration_z: az,
+      gyro_x: gx,
+      gyro_y: gy,
+      gyro_z: gz,
+      g_force: Math.sqrt(ax ** 2 + ay ** 2 + az ** 2),
+    };
+  }
+
+  if (parts.length === 3) {
+    const [gx, gy, gz] = parts;
+    return {
+      acceleration_x: 0,
+      acceleration_y: 0,
+      acceleration_z: 0,
+      gyro_x: gx,
+      gyro_y: gy,
+      gyro_z: gz,
+      g_force: 0,
+    };
+  }
+
+  if (parts.length < 3) {
+    return null;
+  }
+  return null;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -172,6 +241,12 @@ class BluetoothTelemetryService {
     return dedupeDevices([...bondedDevices, ...discoveredDevices]);
   }
 
+  async findHardwareCandidates(preferredNames: string[] = []): Promise<ScanDevice[]> {
+    await BluetoothClassic.requestBluetoothEnabled();
+    const bondedDevices = await this.getBondedDevices().catch(() => []);
+    return bondedDevices.filter((device) => matchesHardwareName(device.name, preferredNames));
+  }
+
   async startScan(onDeviceFound: (device: ScanDevice) => void): Promise<void> {
     const devices = await this.findDevices();
     devices.forEach((device) => onDeviceFound(device));
@@ -243,9 +318,34 @@ class BluetoothTelemetryService {
     };
   }
 
+  async connectToFirstHardwareMatch(
+    preferredNames: string[],
+    onTelemetry: (telemetry: TelemetryData) => void
+  ): Promise<ScanDevice> {
+    const candidates = await this.findHardwareCandidates(preferredNames);
+    if (candidates.length === 0) {
+      throw new Error(
+        'No hay dispositivos Bluetooth emparejados que coincidan con el módulo del hardware. Empareja primero el HC-05 en los ajustes del teléfono.'
+      );
+    }
+
+    let lastError: unknown;
+    for (const device of candidates) {
+      try {
+        return await this.connect(device.id, onTelemetry);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    const reason = lastError instanceof Error ? lastError.message : 'unknown';
+    throw new Error(`Se encontraron módulos compatibles, pero no se pudo conectar a ninguno. Detalle: ${reason}`);
+  }
+
   disconnect() {
     this.disconnectCurrentConnection().catch(() => undefined);
   }
 }
 
 export const bluetoothTelemetryService = new BluetoothTelemetryService();
+export const bluetoothDeviceNameMatcher = matchesHardwareName;
