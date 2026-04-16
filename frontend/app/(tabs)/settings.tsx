@@ -24,8 +24,8 @@ import {
   bluetoothTelemetryService,
   bluetoothDeviceNameMatcher,
   isBluetoothClassicAvailable,
-  ScanDevice,
 } from '../../src/services/bluetooth';
+import type { ScanDevice } from '../../src/services/bluetooth';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
