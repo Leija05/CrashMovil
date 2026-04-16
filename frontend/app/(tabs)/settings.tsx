@@ -261,8 +261,12 @@ export default function SettingsScreen() {
       Alert.alert(
         settings.language === 'es' ? 'No se pudo conectar' : 'Connection failed',
         settings.language === 'es'
-          ? 'Verifica que tu módulo HC-05 esté emparejado y enviando datos.'
-          : 'Verify your HC-05 module is paired and streaming telemetry.'
+          ? `Verifica que tu módulo HC-05 esté emparejado y enviando datos.${
+              error instanceof Error && error.message ? `\n\nDetalle: ${error.message}` : ''
+            }`
+          : `Verify your HC-05 module is paired and streaming telemetry.${
+              error instanceof Error && error.message ? `\n\nDetails: ${error.message}` : ''
+            }`
       );
     } finally {
       setIsConnecting(false);
