@@ -22,6 +22,7 @@ import { settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
 import {
   bluetoothTelemetryService,
+  bluetoothDeviceNameMatcher,
   isBluetoothClassicAvailable,
   ScanDevice,
 } from '../../src/services/bluetooth';
@@ -170,25 +171,32 @@ export default function SettingsScreen() {
         return;
       }
 
-      const foundDevices = await bluetoothTelemetryService.findDevices(20000);
-      setDiscoveredDevices(foundDevices);
+      const preferredNames = [deviceName, settings.device_name, 'HC-05', 'HC05', 'HC-06', 'HC06'];
+      const bondedMatches = await bluetoothTelemetryService.findHardwareCandidates(preferredNames);
+      setDiscoveredDevices(bondedMatches);
 
-      if (foundDevices.length === 0) {
+      if (bondedMatches.length === 0) {
         Alert.alert(
           settings.language === 'es' ? 'Sin coincidencias' : 'No matches found',
           settings.language === 'es'
-            ? 'No se encontraron dispositivos. Primero empareja el hardware (HC-05) en Ajustes Bluetooth del teléfono y vuelve a intentar.'
-            : 'No devices found. First pair your hardware (HC-05) in your phone Bluetooth settings, then try again.'
+            ? 'No hay dispositivos emparejados que coincidan con el módulo. Empareja primero tu HC-05 en Ajustes Bluetooth del teléfono.'
+            : 'There are no paired devices that match your hardware module. Pair your HC-05 in phone Bluetooth settings first.'
         );
         return;
       }
 
-      const priorityMatches = foundDevices.filter((device) =>
-        /(hc-?0[56]|arduino|nano|gyro|giroscopio|linvor|bt)/i.test(device.name)
+      const priorityMatches = bondedMatches.filter((device) =>
+        bluetoothDeviceNameMatcher(device.name, [deviceName, settings.device_name])
       );
-      const devicesToShow = priorityMatches.length > 0 ? priorityMatches : foundDevices;
+      const devicesToShow = priorityMatches.length > 0 ? priorityMatches : bondedMatches;
       const topDevices = devicesToShow.slice(0, 6);
       const otherCount = devicesToShow.length - topDevices.length;
+
+      const primaryDevice = topDevices[0];
+      if (primaryDevice) {
+        await handleConnectDevice(primaryDevice);
+        return;
+      }
 
       Alert.alert(
         settings.language === 'es' ? 'Seleccionar dispositivo' : 'Select device',
