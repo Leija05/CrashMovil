@@ -4,7 +4,6 @@ import { StatusBar } from 'expo-status-bar';
 import { useCrashStore } from '../src/store/crashStore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, setAuthToken, settingsApi } from '../src/services/api';
-import '../src/i18n';
 import i18n from '../src/i18n';
 
 export default function RootLayout() {

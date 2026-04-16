@@ -22,29 +22,29 @@ export default function HistoryScreen() {
   
   const [refreshing, setRefreshing] = useState(false);
   
+  const loadImpacts = useCallback(async () => {
+    if (!user) return;
+    try {
+      const response = await impactsApi.getAll();
+      setImpacts(response.data);
+    } catch {
+      console.log('Impacts unavailable without authentication');
+    }
+  }, [setImpacts, user]);
+
   useEffect(() => {
     if (user) {
       loadImpacts();
     } else {
       setImpacts([]);
     }
-  }, [user]);
-  
-  const loadImpacts = async () => {
-    if (!user) return;
-    try {
-      const response = await impactsApi.getAll();
-      setImpacts(response.data);
-    } catch (error) {
-      console.log('Impacts unavailable without authentication');
-    }
-  };
+  }, [loadImpacts, setImpacts, user]);
   
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadImpacts();
     setRefreshing(false);
-  }, []);
+  }, [loadImpacts]);
   
   const getSeverityColor = (severity: string) => {
     switch (severity) {

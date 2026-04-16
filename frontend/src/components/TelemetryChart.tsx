@@ -1,8 +1,7 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { useCrashStore } from '../store/crashStore';
-import { useTranslation } from 'react-i18next';
 
 const { width } = Dimensions.get('window');
 
@@ -21,6 +20,14 @@ interface TelemetryChartProps {
 export const TelemetryChart: React.FC<TelemetryChartProps> = ({ data, title, color, maxValue }) => {
   const { settings } = useCrashStore();
   const isDark = settings.theme === 'dark';
+  const computedMaxValue = useMemo(() => {
+    if (typeof maxValue === 'number' && Number.isFinite(maxValue)) {
+      return maxValue;
+    }
+
+    const localMax = Math.max(...data.map((point) => Math.abs(point.value)), 0);
+    return localMax > 0 ? localMax * 1.2 : 10;
+  }, [data, maxValue]);
   
   return (
     <View style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}>
@@ -40,7 +47,7 @@ export const TelemetryChart: React.FC<TelemetryChartProps> = ({ data, title, col
         endFillColor={isDark ? '#1a1a2e' : '#ffffff'}
         startOpacity={0.4}
         endOpacity={0.1}
-        maxValue={maxValue || Math.max(...data.map(d => Math.abs(d.value))) * 1.2 || 10}
+        maxValue={computedMaxValue}
       />
     </View>
   );

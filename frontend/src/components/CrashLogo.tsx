@@ -58,7 +58,7 @@ export const CrashLogo: React.FC<LogoProps> = ({
         ])
       ).start();
     }
-  }, [animated]);
+  }, [animated, glowAnim, pulseAnim]);
   
   const LogoSvg = (
     <Svg width={width} height={height} viewBox="0 0 537 366">

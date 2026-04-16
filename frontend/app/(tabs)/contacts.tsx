@@ -26,29 +26,29 @@ export default function ContactsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [verificationTokens, setVerificationTokens] = useState<Record<string, string>>({});
   
+  const loadContacts = useCallback(async () => {
+    if (!user) return;
+    try {
+      const response = await contactsApi.getAll();
+      setContacts(response.data);
+    } catch {
+      console.log('Contacts unavailable without authentication');
+    }
+  }, [setContacts, user]);
+
   useEffect(() => {
     if (user) {
       loadContacts();
     } else {
       setContacts([]);
     }
-  }, [user]);
-  
-  const loadContacts = async () => {
-    if (!user) return;
-    try {
-      const response = await contactsApi.getAll();
-      setContacts(response.data);
-    } catch (error) {
-      console.log('Contacts unavailable without authentication');
-    }
-  };
+  }, [loadContacts, setContacts, user]);
   
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadContacts();
     setRefreshing(false);
-  }, []);
+  }, [loadContacts]);
   
   const handleAddContact = () => {
     if (!user) return;

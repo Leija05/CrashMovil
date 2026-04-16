@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -45,30 +45,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const alertSentRef = useRef(false);
   
-  useEffect(() => {
-    if (visible && impact) {
-      // Reset state when modal opens
-      setLocalCountdown(settings.countdown_seconds);
-      setAlertSent(false);
-      setSmsSent(false);
-      alertSentRef.current = false;
-      setDiagnosis(null);
-      startCountdown();
-      startPulseAnimation();
-      Vibration.vibrate([500, 500, 500, 500], true);
-    } else {
-      stopCountdown();
-      Vibration.cancel();
-      pulseAnim.stopAnimation();
-    }
-    
-    return () => {
-      stopCountdown();
-      Vibration.cancel();
-    };
-  }, [visible, impact]);
-  
-  const startPulseAnimation = () => {
+  const startPulseAnimation = useCallback(() => {
     pulseAnim.setValue(1);
     Animated.loop(
       Animated.sequence([
@@ -84,72 +61,16 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
         }),
       ])
     ).start();
-  };
+  }, [pulseAnim]);
   
-  const startCountdown = () => {
-    // Clear any existing interval first
-    if (countdownRef.current) {
-      clearInterval(countdownRef.current);
-    }
-    
-    countdownRef.current = setInterval(() => {
-      setLocalCountdown((prev) => {
-        if (prev <= 1) {
-          // Countdown reached 0
-          stopCountdown();
-          if (!alertSentRef.current) {
-            alertSentRef.current = true;
-            sendEmergencyAlert();
-          }
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-  };
-  
-  const stopCountdown = () => {
+  const stopCountdown = useCallback(() => {
     if (countdownRef.current) {
       clearInterval(countdownRef.current);
       countdownRef.current = null;
     }
-  };
-  
-  // ============================================================
-  // ALERT DISPATCH STATUS
-  // NOTE: real SMS/WhatsApp dispatch is handled by backend when impact is created.
-  // ============================================================
-  const sendEmergencyAlert = async () => {
-    setAlertSent(true);
-    Vibration.cancel();
-    pulseAnim.stopAnimation();
-    
-    // Get AI diagnosis
-    fetchDiagnosis();
-    
-    // Message dispatch is backend-driven. Here we only reflect UI status.
-    if (settings.sms_enabled && contacts.length > 0 && impact) {
-      setSmsSent((impact.alerts_dispatched ?? 0) > 0);
-    }
-    
-    // Auto call primary contact after 3 seconds
-    if (settings.auto_call_enabled) {
-      const primaryContact = contacts.find(c => c.is_primary);
-      if (primaryContact) {
-        setTimeout(() => {
-          Linking.openURL(`tel:${primaryContact.phone}`).catch(err => 
-            console.log('Call not available:', err)
-          );
-        }, 3000);
-      }
-    }
-  };
-  
-  // ============================================================
-  // END ALERT DISPATCH STATUS
-  // ============================================================
-  
-  const fetchDiagnosis = async () => {
+  }, []);
+
+  const fetchDiagnosis = useCallback(async () => {
     if (!impact) return;
     setLoadingDiagnosis(true);
     
@@ -190,7 +111,86 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     } finally {
       setLoadingDiagnosis(false);
     }
-  };
+  }, [impact, profile?.allergies, profile?.blood_type, profile?.medical_conditions, settings.language, user]);
+  
+  const sendEmergencyAlert = useCallback(async () => {
+    setAlertSent(true);
+    Vibration.cancel();
+    pulseAnim.stopAnimation();
+    
+    // Get AI diagnosis
+    fetchDiagnosis();
+    
+    // Message dispatch is backend-driven. Here we only reflect UI status.
+    if (settings.sms_enabled && contacts.length > 0 && impact) {
+      setSmsSent((impact.alerts_dispatched ?? 0) > 0);
+    }
+    
+    // Auto call primary contact after 3 seconds
+    if (settings.auto_call_enabled) {
+      const primaryContact = contacts.find(c => c.is_primary);
+      if (primaryContact) {
+        setTimeout(() => {
+          Linking.openURL(`tel:${primaryContact.phone}`).catch(err => 
+            console.log('Call not available:', err)
+          );
+        }, 3000);
+      }
+    }
+  }, [contacts, fetchDiagnosis, impact, pulseAnim, settings.auto_call_enabled, settings.sms_enabled]);
+
+  const startCountdown = useCallback(() => {
+    // Clear any existing interval first
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current);
+    }
+    
+    countdownRef.current = setInterval(() => {
+      setLocalCountdown((prev) => {
+        if (prev <= 1) {
+          // Countdown reached 0
+          stopCountdown();
+          if (!alertSentRef.current) {
+            alertSentRef.current = true;
+            sendEmergencyAlert();
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  }, [sendEmergencyAlert, stopCountdown]);
+  
+  // ============================================================
+  // ALERT DISPATCH STATUS
+  // NOTE: real SMS/WhatsApp dispatch is handled by backend when impact is created.
+  // ============================================================
+  // ============================================================
+  // END ALERT DISPATCH STATUS
+  // ============================================================
+
+  useEffect(() => {
+    if (visible && impact) {
+      // Reset state when modal opens
+      setLocalCountdown(settings.countdown_seconds);
+      setAlertSent(false);
+      setSmsSent(false);
+      alertSentRef.current = false;
+      setDiagnosis(null);
+      startCountdown();
+      startPulseAnimation();
+      Vibration.vibrate([500, 500, 500, 500], true);
+    } else {
+      stopCountdown();
+      Vibration.cancel();
+      pulseAnim.stopAnimation();
+    }
+    
+    return () => {
+      stopCountdown();
+      Vibration.cancel();
+    };
+  }, [impact, pulseAnim, settings.countdown_seconds, startCountdown, startPulseAnimation, stopCountdown, visible]);
   
   const handleCancelAlarm = async () => {
     stopCountdown();

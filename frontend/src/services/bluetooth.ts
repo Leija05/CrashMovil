@@ -20,7 +20,7 @@ try {
   const module = require('react-native-bluetooth-classic');
   BluetoothClassic = module?.default ?? module;
   bluetoothClassicAvailable = true;
-} catch (error) {
+} catch {
   bluetoothClassicAvailable = false;
   BluetoothClassic = {
     requestBluetoothEnabled: async () => {
