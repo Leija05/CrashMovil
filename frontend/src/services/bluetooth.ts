@@ -1,9 +1,16 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PermissionsAndroid, Platform } from 'react-native';
 import { TelemetryData } from '../store/crashStore';
+
+const DEVICE_ALIASES_STORAGE_KEY = '@crashmovil/bluetooth-device-aliases';
+
+type DeviceAliasMap = Record<string, string>;
 
 export interface ScanDevice {
   id: string;
   name: string;
+  alias?: string;
+  displayName: string;
 }
 
 // Variables de estado del módulo
@@ -23,15 +30,29 @@ try {
 // Exportación requerida por settings.tsx para verificar disponibilidad
 export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
 
-const normalizeDevice = (device: any): ScanDevice | null => {
+const normalizeAddress = (address: string) => String(address).trim().toUpperCase();
+
+const normalizeAlias = (alias: string) => alias.trim();
+
+const getDisplayName = (name: string, alias?: string) => alias || name;
+
+const normalizeDevice = (device: any, aliases: DeviceAliasMap = {}): ScanDevice | null => {
   if (!device?.id) return null;
+
+  const id = normalizeAddress(device.id);
+  const fallbackName = `HC05-${id.slice(-4)}`;
+  const name = (device.name || fallbackName).trim();
+  const alias = aliases[id];
+
   return {
-    id: String(device.id),
-    name: (device.name || `HC05-${String(device.id).slice(-4)}`).trim(),
+    id,
+    name,
+    alias,
+    displayName: getDisplayName(name, alias),
   };
 };
 
-const parseTelemetry = (payload: string): TelemetryData | null => {
+const parseTelemetryPayload = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
 
@@ -49,6 +70,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   } catch {
     const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
     if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) return null;
+
     return {
       acceleration_x: parts[0],
       acceleration_y: parts[1],
@@ -59,6 +81,13 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
       g_force: parts[6],
     };
   }
+};
+
+const parseTelemetryChunk = (chunk: string): TelemetryData[] => {
+  return chunk
+    .split(/\r?\n/)
+    .map((line) => parseTelemetryPayload(line))
+    .filter((telemetry): telemetry is TelemetryData => telemetry !== null);
 };
 
 class BluetoothTelemetryService {
@@ -79,21 +108,65 @@ class BluetoothTelemetryService {
     }
   }
 
-  // RENOMBRADO: De findDevices a findHardwareCandidates para coincidir con tu settings.tsx
-  async findHardwareCandidates(): Promise<ScanDevice[]> {
-    if (!bluetoothClassicAvailable) return [];
-    
-    await this.requestPermissions();
-    await BluetoothClassic.requestBluetoothEnabled();
-    
-    // Obtenemos dispositivos vinculados (igual que Serial Bluetooth Terminal)
-    const bonded = await BluetoothClassic.getBondedDevices();
-    return bonded
-      .map((d: any) => normalizeDevice(d))
-      .filter((d: any): d is ScanDevice => d !== null);
+  async getDeviceAliases(): Promise<DeviceAliasMap> {
+    try {
+      const aliasesRaw = await AsyncStorage.getItem(DEVICE_ALIASES_STORAGE_KEY);
+      if (!aliasesRaw) return {};
+
+      const parsedAliases = JSON.parse(aliasesRaw);
+      if (!parsedAliases || typeof parsedAliases !== 'object') return {};
+
+      return Object.entries(parsedAliases).reduce<DeviceAliasMap>((acc, [mac, alias]) => {
+        if (typeof alias !== 'string') return acc;
+
+        const normalizedMac = normalizeAddress(mac);
+        const normalizedAlias = normalizeAlias(alias);
+        if (!normalizedAlias) return acc;
+
+        acc[normalizedMac] = normalizedAlias;
+        return acc;
+      }, {});
+    } catch {
+      return {};
+    }
   }
 
-  // Alias por si acaso otras partes del código usan findDevices
+  async setDeviceAlias(deviceId: string, alias: string): Promise<DeviceAliasMap> {
+    const normalizedId = normalizeAddress(deviceId);
+    const normalizedAlias = normalizeAlias(alias);
+    const currentAliases = await this.getDeviceAliases();
+
+    if (normalizedAlias) {
+      currentAliases[normalizedId] = normalizedAlias;
+    } else {
+      delete currentAliases[normalizedId];
+    }
+
+    await AsyncStorage.setItem(DEVICE_ALIASES_STORAGE_KEY, JSON.stringify(currentAliases));
+    return currentAliases;
+  }
+
+  async clearDeviceAlias(deviceId: string): Promise<DeviceAliasMap> {
+    return this.setDeviceAlias(deviceId, '');
+  }
+
+  // Sin descubrimiento activo: solo dispositivos vinculados en el sistema operativo.
+  async findHardwareCandidates(): Promise<ScanDevice[]> {
+    if (!bluetoothClassicAvailable) return [];
+
+    await this.requestPermissions();
+    await BluetoothClassic.requestBluetoothEnabled();
+
+    const aliases = await this.getDeviceAliases();
+    const bonded = await BluetoothClassic.getBondedDevices();
+
+    return bonded
+      .map((device: any) => normalizeDevice(device, aliases))
+      .filter((device: ScanDevice | null): device is ScanDevice => device !== null)
+      .sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }
+
+  // Alias por compatibilidad con flujos existentes.
   async findDevices(): Promise<ScanDevice[]> {
     return this.findHardwareCandidates();
   }
@@ -105,50 +178,56 @@ class BluetoothTelemetryService {
       throw new Error('Bluetooth no disponible');
     }
 
-    // Cancelar cualquier descubrimiento activo para evitar colisiones de socket
-    try {
-      await BluetoothClassic.cancelDiscovery();
-    } catch (e) { }
+    const normalizedId = normalizeAddress(deviceId);
 
-    // Pausa de estabilización necesaria para el stack de Android
-    await new Promise(resolve => setTimeout(resolve, 800));
+    await this.requestPermissions();
+    await BluetoothClassic.requestBluetoothEnabled();
 
-    // Conexión SPP Insegura (idéntica a Serial Bluetooth Terminal para HC-05)
-    const device = await BluetoothClassic.connectToDevice(deviceId, {
+    const device = await BluetoothClassic.connectToDevice(normalizedId, {
       connectorType: 'rfcomm',
-      secure: false, 
-      connectionType: 'binary',
+      secure: false,
+      connectionType: 'delimited',
       delimiter: '\n',
       deviceCharset: 'utf-8',
     });
 
-    const finalId = device?.id ? String(device.id) : deviceId;
+    const finalId = normalizeAddress(device?.id || normalizedId);
     this.connectedDeviceId = finalId;
 
     this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
-      const telemetry = parseTelemetry(event?.data || '');
-      if (telemetry) onTelemetry(telemetry);
+      const dataChunk = String(event?.data ?? '');
+      const frames = parseTelemetryChunk(dataChunk);
+      frames.forEach((telemetry) => onTelemetry(telemetry));
     });
 
-    return {
-      id: finalId,
-      name: (device?.name || `HC05-${finalId.slice(-4)}`).trim(),
-    };
+    const aliases = await this.getDeviceAliases();
+    const normalized = normalizeDevice(device ?? { id: finalId }, aliases);
+
+    return (
+      normalized ?? {
+        id: finalId,
+        name: `HC05-${finalId.slice(-4)}`,
+        displayName: aliases[finalId] || `HC05-${finalId.slice(-4)}`,
+        alias: aliases[finalId],
+      }
+    );
   }
 
-  disconnect() {
+  async disconnect() {
     if (this.removeDataListener) {
       this.removeDataListener();
       this.removeDataListener = null;
     }
-    if (this.connectedDeviceId) {
-      BluetoothClassic.disconnectFromDevice(this.connectedDeviceId).catch(() => {});
+
+    if (this.connectedDeviceId && bluetoothClassicAvailable) {
+      try {
+        await BluetoothClassic.disconnectFromDevice(this.connectedDeviceId);
+      } catch {
+        // noop
+      }
       this.connectedDeviceId = null;
     }
   }
 }
 
 export const bluetoothTelemetryService = new BluetoothTelemetryService();
-
-
-
