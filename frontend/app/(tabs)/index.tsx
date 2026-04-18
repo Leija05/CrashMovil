@@ -221,9 +221,10 @@ export default function HomeScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#dc2626" />}
         contentContainerStyle={styles.scrollContent}
       >
-        <Animated.View style={[styles.header, { opacity: titleAnim }]}> 
+        <Animated.View style={[styles.heroCard, isDark ? styles.heroCardDark : styles.heroCardLight, { opacity: titleAnim }]}>
+          <View style={styles.heroGlow} />
           <View style={styles.logoContainer}>
-            <CrashLogo size={38} color="#dc2626" animated={true} />
+            <CrashLogo size={40} color="#dc2626" animated={true} />
             <View style={styles.titleContainer}>
               <Text style={[styles.logo, isDark ? styles.textDark : styles.textLight]}>C.R.A.S.H.</Text>
               <Text style={[styles.tagline, isDark ? styles.taglineDark : styles.taglineLight]}>
@@ -231,27 +232,48 @@ export default function HomeScreen() {
               </Text>
             </View>
           </View>
-        </Animated.View>
-
-        <Animated.View style={[styles.statusCard, { opacity: cardAnim }]}> 
-          <Text style={[styles.statusTitle, isDark ? styles.textDark : styles.textLight]}>
-            {isConnected ? t('systemActive') : t('systemInactive')}
-          </Text>
-          <Text style={[styles.statusSubtitle, isDark ? styles.subtitleDark : styles.subtitleLight]}>
+          <View style={[styles.statusPill, isConnected ? styles.statusPillOnline : styles.statusPillOffline]}>
+            <View style={[styles.statusDot, isConnected ? styles.statusDotOnline : styles.statusDotOffline]} />
+            <Text style={styles.statusPillText}>
+              {isConnected ? t('systemActive') : t('systemInactive')}
+            </Text>
+          </View>
+          <Text style={[styles.heroDeviceText, isDark ? styles.subtitleDark : styles.subtitleLight]}>
             {t('linkedDevice')}: {connectedDeviceName ?? t('notConnected')}
           </Text>
-          <View style={styles.statsRow}>
-            <Text style={[styles.statText, isDark ? styles.textDark : styles.textLight]}>{t('battery')}: {batteryLevel}%</Text>
-            <Text style={[styles.statText, isDark ? styles.textDark : styles.textLight]}>{t('records')}: {stats.real_impacts}</Text>
-            <Text style={[styles.statText, isDark ? styles.textDark : styles.textLight]}>{t('location')}: {currentLocation ? 'GPS' : '--'}</Text>
+        </Animated.View>
+
+        <Animated.View style={[styles.quickStatsGrid, { opacity: cardAnim }]}>
+          <View style={[styles.quickStatCard, isDark ? styles.cardDark : styles.cardLight]}>
+            <Text style={styles.quickStatLabel}>{t('battery')}</Text>
+            <Text style={[styles.quickStatValue, isDark ? styles.textDark : styles.textLight]}>{batteryLevel}%</Text>
+          </View>
+          <View style={[styles.quickStatCard, isDark ? styles.cardDark : styles.cardLight]}>
+            <Text style={styles.quickStatLabel}>{t('records')}</Text>
+            <Text style={[styles.quickStatValue, isDark ? styles.textDark : styles.textLight]}>{stats.real_impacts}</Text>
+          </View>
+          <View style={[styles.quickStatCard, isDark ? styles.cardDark : styles.cardLight]}>
+            <Text style={styles.quickStatLabel}>{t('location')}</Text>
+            <Text style={[styles.quickStatValue, isDark ? styles.textDark : styles.textLight]}>{currentLocation ? 'GPS' : '--'}</Text>
           </View>
         </Animated.View>
 
-        <View style={styles.section}>
+        <View style={[styles.section, isDark ? styles.cardDark : styles.cardLight]}>
           <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>{t('realTimeTelemetry')}</Text>
-          <Text style={[styles.telemetryText, isDark ? styles.textDark : styles.textLight]}>
-            X: {telemetry.acceleration_x.toFixed(2)} | Y: {telemetry.acceleration_y.toFixed(2)} | Z: {telemetry.acceleration_z.toFixed(2)}
-          </Text>
+          <View style={styles.telemetryPillsRow}>
+            <View style={styles.telemetryPill}>
+              <Text style={styles.telemetryPillLabel}>X</Text>
+              <Text style={[styles.telemetryPillValue, isDark ? styles.textDark : styles.textLight]}>{telemetry.acceleration_x.toFixed(2)}</Text>
+            </View>
+            <View style={styles.telemetryPill}>
+              <Text style={styles.telemetryPillLabel}>Y</Text>
+              <Text style={[styles.telemetryPillValue, isDark ? styles.textDark : styles.textLight]}>{telemetry.acceleration_y.toFixed(2)}</Text>
+            </View>
+            <View style={styles.telemetryPill}>
+              <Text style={styles.telemetryPillLabel}>Z</Text>
+              <Text style={[styles.telemetryPillValue, isDark ? styles.textDark : styles.textLight]}>{telemetry.acceleration_z.toFixed(2)}</Text>
+            </View>
+          </View>
           <Text style={styles.gForceText}>G: {telemetry.g_force.toFixed(2)}</Text>
           {telemetryHistory.g.length > 5 && (
             <TelemetryChart
@@ -264,7 +286,7 @@ export default function HomeScreen() {
         </View>
 
         {impacts.length > 0 && (
-          <View style={styles.section}>
+          <View style={[styles.section, isDark ? styles.cardDark : styles.cardLight]}>
             <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
               {settings.language === 'es' ? 'Últimos impactos reales' : 'Recent real impacts'}
             </Text>
@@ -289,27 +311,85 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  containerDark: { backgroundColor: '#0c0c0c' },
-  containerLight: { backgroundColor: '#f0f4f8' },
+  containerDark: { backgroundColor: '#05070d' },
+  containerLight: { backgroundColor: '#eef2ff' },
   scrollContent: { padding: 20, paddingBottom: 90 },
-  header: { marginBottom: 16 },
+  heroCard: {
+    borderRadius: 22,
+    padding: 18,
+    marginBottom: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    position: 'relative',
+  },
+  heroCardDark: {
+    backgroundColor: '#10141e',
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  heroCardLight: {
+    backgroundColor: '#ffffff',
+    borderColor: 'rgba(31,41,55,0.09)',
+  },
+  heroGlow: {
+    position: 'absolute',
+    right: -32,
+    top: -28,
+    width: 140,
+    height: 140,
+    borderRadius: 999,
+    backgroundColor: 'rgba(220,38,38,0.18)',
+  },
   logoContainer: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   titleContainer: { flex: 1 },
   logo: { fontSize: 26, fontWeight: '800' },
-  tagline: { fontSize: 11 },
+  tagline: { fontSize: 11, marginTop: 2 },
   taglineDark: { color: '#9ca3af' },
   taglineLight: { color: '#4b5563' },
-  statusCard: { borderRadius: 12, padding: 16, backgroundColor: 'rgba(220,38,38,0.12)', marginBottom: 16 },
-  statusTitle: { fontSize: 20, fontWeight: '700' },
-  statusSubtitle: { marginTop: 6, marginBottom: 10 },
+  statusPill: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignSelf: 'flex-start',
+    alignItems: 'center',
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    gap: 8,
+  },
+  statusPillOnline: { backgroundColor: 'rgba(34,197,94,0.2)' },
+  statusPillOffline: { backgroundColor: 'rgba(239,68,68,0.2)' },
+  statusDot: { width: 8, height: 8, borderRadius: 999 },
+  statusDotOnline: { backgroundColor: '#22c55e' },
+  statusDotOffline: { backgroundColor: '#ef4444' },
+  statusPillText: { color: '#111827', fontSize: 12, fontWeight: '700' },
+  heroDeviceText: { marginTop: 9, fontSize: 13, fontWeight: '500' },
   subtitleDark: { color: '#d1d5db' },
   subtitleLight: { color: '#374151' },
-  statsRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 8 },
-  statText: { fontSize: 12, fontWeight: '600' },
-  section: { borderRadius: 12, padding: 16, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 16 },
+  quickStatsGrid: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  quickStatCard: {
+    flex: 1,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(148,163,184,0.2)',
+  },
+  quickStatLabel: { color: '#94a3b8', fontSize: 11, fontWeight: '600' },
+  quickStatValue: { marginTop: 6, fontSize: 20, fontWeight: '800' },
+  section: { borderRadius: 18, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: 'rgba(148,163,184,0.2)' },
+  cardDark: { backgroundColor: '#101827' },
+  cardLight: { backgroundColor: '#ffffff' },
   sectionTitle: { fontSize: 16, fontWeight: '700', marginBottom: 10 },
-  telemetryText: { fontSize: 14, marginBottom: 6 },
-  gForceText: { fontSize: 22, fontWeight: '800', color: '#dc2626', marginBottom: 10 },
+  telemetryPillsRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
+  telemetryPill: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(148,163,184,0.14)',
+    alignItems: 'center',
+  },
+  telemetryPillLabel: { color: '#94a3b8', fontSize: 11, fontWeight: '700' },
+  telemetryPillValue: { color: '#111827', fontSize: 14, fontWeight: '700', marginTop: 3 },
+  gForceText: { fontSize: 28, fontWeight: '800', color: '#dc2626', marginBottom: 10 },
   impactItem: { borderLeftWidth: 4, paddingLeft: 10, marginBottom: 8 },
   impactG: { fontSize: 16, fontWeight: '700' },
   textDark: { color: '#fff' },
