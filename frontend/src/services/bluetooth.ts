@@ -6,14 +6,33 @@ export interface ScanDevice {
   name: string;
 }
 
-const DEFAULT_MODULE_NAMES = ['HC-05', 'HC05', 'HC-10', 'HC10'];
-
 let bluetoothClassicAvailable = false;
-let BluetoothClassic: any;
+type RawBluetoothDevice = {
+  id?: string | number;
+  name?: string | null;
+};
+
+type BluetoothDataEvent = {
+  data?: string;
+};
+
+type BluetoothSubscription = {
+  remove?: () => void;
+};
+
+type BluetoothClassicModule = {
+  getBondedDevices: () => Promise<RawBluetoothDevice[]>;
+  connectToDevice: (id: string) => Promise<unknown>;
+  disconnect?: () => Promise<unknown>;
+  onDataReceived: (listener: (event: BluetoothDataEvent) => void) => (() => void) | BluetoothSubscription;
+  onDeviceDisconnected?: (listener: (event: unknown) => void) => (() => void) | BluetoothSubscription;
+};
+
+let BluetoothClassic: BluetoothClassicModule | null = null;
 
 try {
   const module = require('react-native-bluetooth-classic');
-  BluetoothClassic = module?.default ?? module;
+  BluetoothClassic = (module?.default ?? module) as BluetoothClassicModule;
   bluetoothClassicAvailable = true;
 } catch (error) {
   console.error('Bluetooth Classic no está disponible:', error);
@@ -22,21 +41,23 @@ try {
 
 export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
 
-const normalizeName = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+const normalizeName = (value: string) => value.trim().toUpperCase().replace(/[\s_-]+/g, '');
+
+const TARGET_MODULE_NAMES = ['HC05'];
 
 export const bluetoothDeviceNameMatcher = (deviceName?: string, preferredNames: string[] = []) => {
   if (!deviceName) return false;
   const normalizedDevice = normalizeName(deviceName);
-  const candidates = [...preferredNames, ...DEFAULT_MODULE_NAMES]
+  const preferred = preferredNames
     .filter(Boolean)
-    .map((name) => normalizeName(name));
+    .map((name) => normalizeName(name))
+    .filter((name) => TARGET_MODULE_NAMES.includes(name));
+  const candidates = preferred.length > 0 ? preferred : TARGET_MODULE_NAMES;
 
-  return candidates.some((candidate) =>
-    normalizedDevice.includes(candidate) || candidate.includes(normalizedDevice)
-  );
+  return candidates.some((candidate) => normalizedDevice === candidate || normalizedDevice.includes(candidate));
 };
 
-const normalizeDevice = (device: any): ScanDevice | null => {
+const normalizeDevice = (device: RawBluetoothDevice): ScanDevice | null => {
   if (!device?.id) return null;
   return {
     id: String(device.id),
@@ -76,8 +97,11 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
 
 class BluetoothTelemetryService {
   private removeDataListener: (() => void) | null = null;
+  private removeDisconnectListener: (() => void) | null = null;
+  private connectedDeviceId: string | null = null;
+  private payloadBuffer = '';
 
-  async requestPermissions() {
+  async requestPermissions(): Promise<void> {
     if (Platform.OS !== 'android') return;
 
     const version = parseInt(String(Platform.Version), 10);
@@ -93,27 +117,90 @@ class BluetoothTelemetryService {
   }
 
   async findHardwareCandidates(preferredNames: string[] = []): Promise<ScanDevice[]> {
-    if (!bluetoothClassicAvailable) return [];
+    if (!bluetoothClassicAvailable || !BluetoothClassic) return [];
 
     await this.requestPermissions();
     const bonded = await BluetoothClassic.getBondedDevices();
 
     return bonded
-      .map((device: any) => normalizeDevice(device))
+      .map((device) => normalizeDevice(device))
       .filter((device: ScanDevice | null): device is ScanDevice => {
         if (!device) return false;
         return bluetoothDeviceNameMatcher(device.name, preferredNames);
       });
   }
 
+  private disposeDataListener() {
+    if (this.removeDataListener) {
+      this.removeDataListener();
+      this.removeDataListener = null;
+    }
+  }
+
+  private disposeDisconnectListener() {
+    if (this.removeDisconnectListener) {
+      this.removeDisconnectListener();
+      this.removeDisconnectListener = null;
+    }
+  }
+
+  private async disconnectCurrentDevice(): Promise<void> {
+    if (!BluetoothClassic) return;
+    try {
+      if (this.connectedDeviceId && BluetoothClassic.disconnect) {
+        await BluetoothClassic.disconnect();
+      }
+    } catch (error) {
+      console.warn('Error al desconectar Bluetooth Classic:', error);
+    } finally {
+      this.connectedDeviceId = null;
+    }
+  }
+
+  private createDataListener(onTelemetry: (telemetry: TelemetryData) => void): (() => void) | null {
+    if (!BluetoothClassic) return null;
+
+    const subscription = BluetoothClassic.onDataReceived((event: BluetoothDataEvent) => {
+      if (typeof event?.data !== 'string') return;
+      this.payloadBuffer += event.data;
+
+      const frames = this.payloadBuffer.split(/\r?\n/);
+      this.payloadBuffer = frames.pop() ?? '';
+
+      frames.forEach((frame) => {
+        const telemetry = parseTelemetry(frame);
+        if (telemetry) onTelemetry(telemetry);
+      });
+    });
+
+    if (typeof subscription === 'function') return subscription;
+    if (typeof subscription?.remove === 'function') {
+      return () => subscription.remove?.();
+    }
+
+    return null;
+  }
+
+  private createDisconnectionListener(onDisconnected: () => void): (() => void) | null {
+    if (!BluetoothClassic?.onDeviceDisconnected) return null;
+    const subscription = BluetoothClassic.onDeviceDisconnected(() => onDisconnected());
+
+    if (typeof subscription === 'function') return subscription;
+    if (typeof subscription?.remove === 'function') {
+      return () => subscription.remove?.();
+    }
+
+    return null;
+  }
+
   async startPassiveTelemetryListener(
     preferredNames: string[],
     onDeviceDetected: (device: ScanDevice | null) => void,
     onTelemetry: (telemetry: TelemetryData) => void
-  ) {
+  ): Promise<void> {
     this.stopPassiveTelemetryListener();
 
-    if (!bluetoothClassicAvailable) {
+    if (!bluetoothClassicAvailable || !BluetoothClassic) {
       onDeviceDetected(null);
       return;
     }
@@ -121,19 +208,36 @@ class BluetoothTelemetryService {
     await this.requestPermissions();
     const candidates = await this.findHardwareCandidates(preferredNames);
     const matchedDevice = candidates[0] ?? null;
-    onDeviceDetected(matchedDevice);
+    if (!matchedDevice) {
+      onDeviceDetected(null);
+      return;
+    }
 
-    this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
-      const telemetry = parseTelemetry(event?.data || '');
-      if (telemetry) onTelemetry(telemetry);
-    });
+    try {
+      await BluetoothClassic.connectToDevice(matchedDevice.id);
+      this.connectedDeviceId = matchedDevice.id;
+      this.payloadBuffer = '';
+      onDeviceDetected(matchedDevice);
+      this.removeDataListener = this.createDataListener(onTelemetry);
+      this.removeDisconnectListener = this.createDisconnectionListener(() => {
+        this.stopPassiveTelemetryListener();
+        onDeviceDetected(null);
+      });
+    } catch (error) {
+      console.error(`No se pudo conectar con el dispositivo ${matchedDevice.name}:`, error);
+      await this.disconnectCurrentDevice();
+      this.disposeDataListener();
+      this.disposeDisconnectListener();
+      onDeviceDetected(null);
+      throw error;
+    }
   }
 
-  stopPassiveTelemetryListener() {
-    if (this.removeDataListener) {
-      this.removeDataListener();
-      this.removeDataListener = null;
-    }
+  stopPassiveTelemetryListener(): void {
+    this.payloadBuffer = '';
+    this.disposeDataListener();
+    this.disposeDisconnectListener();
+    void this.disconnectCurrentDevice();
   }
 }
 
