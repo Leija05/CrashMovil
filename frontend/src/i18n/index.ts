@@ -19,7 +19,6 @@ const resources = {
       battery: 'Batería',
       records: 'Registros',
       realTimeTelemetry: 'Telemetría en Tiempo Real',
-      simulateImpact: 'Simular Impacto',
       connectDevice: 'Conectar Dispositivo',
       
       // Emergency
@@ -64,8 +63,6 @@ const resources = {
       theme: 'Tema',
       dark: 'Oscuro',
       light: 'Claro',
-      simulationMode: 'Modo Simulación',
-      simulationModeDesc: 'Activa datos simulados del sensor',
       
       // Profile
       userProfile: 'Perfil de Usuario',
@@ -115,7 +112,6 @@ const resources = {
       battery: 'Battery',
       records: 'Records',
       realTimeTelemetry: 'Real-Time Telemetry',
-      simulateImpact: 'Simulate Impact',
       connectDevice: 'Connect Device',
       
       // Emergency
@@ -160,8 +156,6 @@ const resources = {
       theme: 'Theme',
       dark: 'Dark',
       light: 'Light',
-      simulationMode: 'Simulation Mode',
-      simulationModeDesc: 'Enable simulated sensor data',
       
       // Profile
       userProfile: 'User Profile',

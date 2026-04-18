@@ -6,12 +6,12 @@ export interface ScanDevice {
   name: string;
 }
 
-// Variables de estado del módulo
+const DEFAULT_MODULE_NAMES = ['HC-05', 'HC05', 'HC-10', 'HC10'];
+
 let bluetoothClassicAvailable = false;
 let BluetoothClassic: any;
 
 try {
-  // Importación estática para asegurar que Metro Bundler incluya la librería en el build nativo
   const module = require('react-native-bluetooth-classic');
   BluetoothClassic = module?.default ?? module;
   bluetoothClassicAvailable = true;
@@ -20,14 +20,27 @@ try {
   bluetoothClassicAvailable = false;
 }
 
-// Exportación requerida por settings.tsx para verificar disponibilidad
 export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
+
+const normalizeName = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+
+export const bluetoothDeviceNameMatcher = (deviceName?: string, preferredNames: string[] = []) => {
+  if (!deviceName) return false;
+  const normalizedDevice = normalizeName(deviceName);
+  const candidates = [...preferredNames, ...DEFAULT_MODULE_NAMES]
+    .filter(Boolean)
+    .map((name) => normalizeName(name));
+
+  return candidates.some((candidate) =>
+    normalizedDevice.includes(candidate) || candidate.includes(normalizedDevice)
+  );
+};
 
 const normalizeDevice = (device: any): ScanDevice | null => {
   if (!device?.id) return null;
   return {
     id: String(device.id),
-    name: (device.name || `HC05-${String(device.id).slice(-4)}`).trim(),
+    name: String(device.name || '').trim() || `BT-${String(device.id).slice(-4)}`,
   };
 };
 
@@ -63,92 +76,65 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
 
 class BluetoothTelemetryService {
   private removeDataListener: (() => void) | null = null;
-  private connectedDeviceId: string | null = null;
 
   async requestPermissions() {
-    if (Platform.OS === 'android') {
-      const version = parseInt(String(Platform.Version), 10);
-      if (version >= 31) {
-        await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        ]);
-      } else {
-        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-      }
+    if (Platform.OS !== 'android') return;
+
+    const version = parseInt(String(Platform.Version), 10);
+    if (version >= 31) {
+      await PermissionsAndroid.requestMultiple([
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+      ]);
+      return;
     }
+
+    await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
   }
 
-  // RENOMBRADO: De findDevices a findHardwareCandidates para coincidir con tu settings.tsx
-  async findHardwareCandidates(): Promise<ScanDevice[]> {
+  async findHardwareCandidates(preferredNames: string[] = []): Promise<ScanDevice[]> {
     if (!bluetoothClassicAvailable) return [];
-    
+
     await this.requestPermissions();
-    await BluetoothClassic.requestBluetoothEnabled();
-    
-    // Obtenemos dispositivos vinculados (igual que Serial Bluetooth Terminal)
     const bonded = await BluetoothClassic.getBondedDevices();
+
     return bonded
-      .map((d: any) => normalizeDevice(d))
-      .filter((d: any): d is ScanDevice => d !== null);
+      .map((device: any) => normalizeDevice(device))
+      .filter((device: ScanDevice | null): device is ScanDevice => {
+        if (!device) return false;
+        return bluetoothDeviceNameMatcher(device.name, preferredNames);
+      });
   }
 
-  // Alias por si acaso otras partes del código usan findDevices
-  async findDevices(): Promise<ScanDevice[]> {
-    return this.findHardwareCandidates();
-  }
-
-  async connect(deviceId: string, onTelemetry: (telemetry: TelemetryData) => void): Promise<ScanDevice> {
-    this.disconnect();
+  async startPassiveTelemetryListener(
+    preferredNames: string[],
+    onDeviceDetected: (device: ScanDevice | null) => void,
+    onTelemetry: (telemetry: TelemetryData) => void
+  ) {
+    this.stopPassiveTelemetryListener();
 
     if (!bluetoothClassicAvailable) {
-      throw new Error('Bluetooth no disponible');
+      onDeviceDetected(null);
+      return;
     }
 
-    // Cancelar cualquier descubrimiento activo para evitar colisiones de socket
-    try {
-      await BluetoothClassic.cancelDiscovery();
-    } catch (e) { }
-
-    // Pausa de estabilización necesaria para el stack de Android
-    await new Promise(resolve => setTimeout(resolve, 800));
-
-    // Conexión SPP Insegura (idéntica a Serial Bluetooth Terminal para HC-05)
-    const device = await BluetoothClassic.connectToDevice(deviceId, {
-      connectorType: 'rfcomm',
-      secure: false, 
-      connectionType: 'binary',
-      delimiter: '\n',
-      deviceCharset: 'utf-8',
-    });
-
-    const finalId = device?.id ? String(device.id) : deviceId;
-    this.connectedDeviceId = finalId;
+    await this.requestPermissions();
+    const candidates = await this.findHardwareCandidates(preferredNames);
+    const matchedDevice = candidates[0] ?? null;
+    onDeviceDetected(matchedDevice);
 
     this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
       const telemetry = parseTelemetry(event?.data || '');
       if (telemetry) onTelemetry(telemetry);
     });
-
-    return {
-      id: finalId,
-      name: (device?.name || `HC05-${finalId.slice(-4)}`).trim(),
-    };
   }
 
-  disconnect() {
+  stopPassiveTelemetryListener() {
     if (this.removeDataListener) {
       this.removeDataListener();
       this.removeDataListener = null;
-    }
-    if (this.connectedDeviceId) {
-      BluetoothClassic.disconnectFromDevice(this.connectedDeviceId).catch(() => {});
-      this.connectedDeviceId = null;
     }
   }
 }
 
 export const bluetoothTelemetryService = new BluetoothTelemetryService();
-
-
-
