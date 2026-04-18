@@ -67,17 +67,12 @@ export interface TelemetryData {
 }
 
 interface CrashStore {
-  // Connection state
   isConnected: boolean;
-  isSimulationMode: boolean;
+  connectedDeviceName: string | null;
   batteryLevel: number;
-  
-  // Emergency state
   isEmergencyActive: boolean;
   currentImpact: ImpactEvent | null;
   countdown: number;
-  
-  // Data
   contacts: EmergencyContact[];
   impacts: ImpactEvent[];
   settings: DeviceSettings;
@@ -85,13 +80,10 @@ interface CrashStore {
   authToken: string | null;
   user: AuthUser | null;
   telemetry: TelemetryData;
-  
-  // Location
   currentLocation: { latitude: number; longitude: number } | null;
-  
-  // Actions
+
   setConnected: (connected: boolean) => void;
-  setSimulationMode: (enabled: boolean) => void;
+  setConnectedDeviceName: (name: string | null) => void;
   setBatteryLevel: (level: number) => void;
   setEmergencyActive: (active: boolean) => void;
   setCurrentImpact: (impact: ImpactEvent | null) => void;
@@ -111,7 +103,7 @@ interface CrashStore {
 
 const defaultSettings: DeviceSettings = {
   id: 'default',
-  device_name: 'CASCO_V2.0',
+  device_name: 'HC-05',
   impact_threshold: 5.0,
   countdown_seconds: 30,
   auto_call_enabled: true,
@@ -131,10 +123,9 @@ const defaultTelemetry: TelemetryData = {
   g_force: 1,
 };
 
-export const useCrashStore = create<CrashStore>((set, get) => ({
-  // Initial state
+export const useCrashStore = create<CrashStore>((set) => ({
   isConnected: false,
-  isSimulationMode: true, // Default to simulation mode
+  connectedDeviceName: null,
   batteryLevel: 94,
   isEmergencyActive: false,
   currentImpact: null,
@@ -147,10 +138,9 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
   user: null,
   telemetry: defaultTelemetry,
   currentLocation: null,
-  
-  // Actions
+
   setConnected: (connected) => set({ isConnected: connected }),
-  setSimulationMode: (enabled) => set({ isSimulationMode: enabled }),
+  setConnectedDeviceName: (name) => set({ connectedDeviceName: name }),
   setBatteryLevel: (level) => set({ batteryLevel: level }),
   setEmergencyActive: (active) => set({ isEmergencyActive: active }),
   setCurrentImpact: (impact) => set({ currentImpact: impact }),
@@ -161,18 +151,17 @@ export const useCrashStore = create<CrashStore>((set, get) => ({
       set({ countdown: countOrFn });
     }
   },
-  
+
   setContacts: (contacts) => set({ contacts }),
   addContact: (contact) => set((state) => ({ contacts: [...state.contacts, contact] })),
   removeContact: (id) => set((state) => ({ contacts: state.contacts.filter((c) => c.id !== id) })),
-  
+
   setImpacts: (impacts) => set({ impacts }),
   addImpact: (impact) => set((state) => ({ impacts: [impact, ...state.impacts] })),
-  
-  // Settings are persisted to backend API, not local storage
+
   setSettings: (settings) => set({ settings }),
   updateSettings: (newSettings) => set((state) => ({ settings: { ...state.settings, ...newSettings } })),
-  
+
   setProfile: (profile) => set({ profile }),
   setAuthSession: (token, user) => set({ authToken: token, user }),
   setTelemetry: (telemetry) => set({ telemetry }),
