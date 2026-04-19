@@ -21,6 +21,7 @@ import i18n from '../../src/i18n';
 import {
   bluetoothTelemetryService,
   bluetoothDeviceNameMatcher,
+  BluetoothDetectionStatus,
   isBluetoothClassicAvailable,
 } from '../../src/services/bluetooth';
 
@@ -38,6 +39,8 @@ export default function SettingsScreen() {
   const [deviceName, setDeviceName] = useState(settings.device_name);
   const [isScanning, setIsScanning] = useState(false);
   const [detectedName, setDetectedName] = useState<string | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<BluetoothDetectionStatus>('idle');
+  const [lastDataAt, setLastDataAt] = useState<number | null>(null);
 
   const handleUpdateSettings = async (updates: Partial<typeof settings>) => {
     try {
@@ -76,45 +79,51 @@ export default function SettingsScreen() {
     }
 
     setIsScanning(true);
+    setConnectionStatus('searching');
+    setLastDataAt(null);
     try {
-      const candidates = await bluetoothTelemetryService.findHardwareCandidates([
-        deviceName,
-        settings.device_name,
-        'HC-05',
-        'HC-10',
-      ]);
+      await bluetoothTelemetryService.startModuleTelemetry(
+        [deviceName, settings.device_name, 'HC-05', 'HC-10'],
+        (status, device) => {
+          setConnectionStatus(status);
 
-      const match = candidates.find((device) =>
-        bluetoothDeviceNameMatcher(device.name, [deviceName, settings.device_name, 'HC-05', 'HC-10'])
-      );
+          if (status !== 'connected' || !device) {
+            if (status === 'not_found') {
+              setDetectedName(null);
+              setConnected(false);
+              setConnectedDeviceName(null);
+              Alert.alert(
+                settings.language === 'es' ? 'Sin coincidencias' : 'No matches',
+                settings.language === 'es'
+                  ? 'No se encontró un HC-05/HC-10 emparejado. Empareja el módulo desde ajustes Bluetooth del teléfono.'
+                  : 'No paired HC-05/HC-10 found. Pair the module from the phone Bluetooth settings first.'
+              );
+            }
+            return;
+          }
 
-      if (!match) {
-        setDetectedName(null);
-        setConnected(false);
-        setConnectedDeviceName(null);
-        Alert.alert(
-          settings.language === 'es' ? 'Sin coincidencias' : 'No matches',
-          settings.language === 'es'
-            ? 'No se encontró un dispositivo emparejado llamado HC-05 o HC-10.'
-            : 'No paired device named HC-05 or HC-10 was found.'
-        );
-        return;
-      }
+          const isExpected = bluetoothDeviceNameMatcher(device.name, [
+            deviceName,
+            settings.device_name,
+            'HC-05',
+            'HC-10',
+          ]);
 
-      setDetectedName(match.name);
-      setConnected(true);
-      setConnectedDeviceName(match.name);
-      setDeviceName(match.name);
-      await handleUpdateSettings({ device_name: match.name });
+          if (!isExpected) return;
 
-      Alert.alert(
-        settings.language === 'es' ? 'Dispositivo detectado' : 'Device detected',
-        settings.language === 'es'
-          ? `Se detectó ${match.name}. La app quedará en escucha pasiva de telemetría.`
-          : `${match.name} detected. App will stay in passive telemetry listening mode.`
+          setDetectedName(device.name);
+          setConnected(true);
+          setConnectedDeviceName(device.name);
+          setDeviceName(device.name);
+          handleUpdateSettings({ device_name: device.name });
+        },
+        () => {
+          setLastDataAt(Date.now());
+        }
       );
     } catch (error) {
       console.error('Bluetooth detection error:', error);
+      setConnectionStatus('idle');
       Alert.alert(
         settings.language === 'es' ? 'Error Bluetooth' : 'Bluetooth error',
         error instanceof Error ? error.message : 'Unknown error'
@@ -159,20 +168,33 @@ export default function SettingsScreen() {
           </View>
           <Text style={styles.sectionSubtitle}>
             {settings.language === 'es'
-              ? 'La app NO inicia conexión Bluetooth. Solo valida si el teléfono ya está emparejado con HC-05/HC-10 y escucha la telemetría.'
-              : 'App does NOT initiate Bluetooth connection. It only validates if phone is already paired with HC-05/HC-10 and listens for telemetry.'}
+              ? 'Nuevo modo fácil: toca el botón y la app busca HC-05/HC-10 emparejado, lo selecciona y empieza a escuchar la telemetría.'
+              : 'New easy mode: tap the button and app searches paired HC-05/HC-10, selects it, and starts telemetry listening.'}
           </Text>
           <TouchableOpacity style={styles.scanButton} onPress={detectPairedModule} disabled={isScanning}>
             <Ionicons name="bluetooth" size={18} color="#fff" />
             <Text style={styles.scanButtonText}>
               {isScanning
-                ? (settings.language === 'es' ? 'Detectando...' : 'Detecting...')
-                : (settings.language === 'es' ? 'Detectar módulo emparejado' : 'Detect paired module')}
+                ? (settings.language === 'es' ? 'Buscando HC-05...' : 'Searching HC-05...')
+                : (settings.language === 'es' ? 'Conectar y escuchar módulo' : 'Connect and listen module')}
             </Text>
           </TouchableOpacity>
+          <Text style={styles.statusText}>
+            {settings.language === 'es' ? 'Estado:' : 'Status:'}{' '}
+            {connectionStatus === 'idle' && (settings.language === 'es' ? 'listo para detectar' : 'ready to detect')}
+            {connectionStatus === 'searching' && (settings.language === 'es' ? 'buscando módulo emparejado' : 'searching paired module')}
+            {connectionStatus === 'connected' && (settings.language === 'es' ? 'módulo detectado y escuchando' : 'module detected and listening')}
+            {connectionStatus === 'not_found' && (settings.language === 'es' ? 'sin módulo emparejado' : 'no paired module')}
+            {connectionStatus === 'unavailable' && (settings.language === 'es' ? 'Bluetooth clásico no disponible' : 'classic Bluetooth unavailable')}
+          </Text>
           {!!detectedName && (
             <Text style={styles.detectedText}>
               {settings.language === 'es' ? 'Detectado:' : 'Detected:'} {detectedName}
+            </Text>
+          )}
+          {!!lastDataAt && (
+            <Text style={styles.lastDataText}>
+              {settings.language === 'es' ? 'Último dato:' : 'Last data:'} {new Date(lastDataAt).toLocaleTimeString()}
             </Text>
           )}
         </View>
@@ -254,6 +276,8 @@ const styles = StyleSheet.create({
   scanButton: { backgroundColor: '#0ea5e9', borderRadius: 10, flexDirection: 'row', justifyContent: 'center', gap: 8, paddingVertical: 12 },
   scanButtonText: { color: '#fff', fontWeight: '600' },
   detectedText: { color: '#16a34a', marginTop: 8, fontWeight: '600' },
+  statusText: { color: '#0ea5e9', marginTop: 10, fontWeight: '600' },
+  lastDataText: { color: '#6b7280', marginTop: 6, fontSize: 12 },
   valueText: { color: '#00d9ff', fontWeight: '700' },
   slider: { width: '100%', height: 40 },
   toggleRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 10 },

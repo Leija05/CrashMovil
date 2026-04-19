@@ -6,6 +6,13 @@ export interface ScanDevice {
   name: string;
 }
 
+export type BluetoothDetectionStatus =
+  | 'idle'
+  | 'unavailable'
+  | 'searching'
+  | 'not_found'
+  | 'connected';
+
 const DEFAULT_MODULE_NAMES = ['HC-05', 'HC05', 'HC-10', 'HC10'];
 
 let bluetoothClassicAvailable = false;
@@ -76,6 +83,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
 
 class BluetoothTelemetryService {
   private removeDataListener: (() => void) | null = null;
+  private activeDevice: ScanDevice | null = null;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
@@ -129,11 +137,61 @@ class BluetoothTelemetryService {
     });
   }
 
+  async startModuleTelemetry(
+    preferredNames: string[],
+    onStatus: (status: BluetoothDetectionStatus, device: ScanDevice | null) => void,
+    onTelemetry: (telemetry: TelemetryData) => void
+  ) {
+    this.stopPassiveTelemetryListener();
+    onStatus('searching', null);
+
+    if (!bluetoothClassicAvailable) {
+      onStatus('unavailable', null);
+      return;
+    }
+
+    await this.requestPermissions();
+    const candidates = await this.findHardwareCandidates(preferredNames);
+    const selectedDevice = candidates[0] ?? null;
+
+    if (!selectedDevice) {
+      onStatus('not_found', null);
+      return;
+    }
+
+    let connectedInstance: any = null;
+
+    try {
+      if (typeof BluetoothClassic.connectToDevice === 'function') {
+        connectedInstance = await BluetoothClassic.connectToDevice(selectedDevice.id, {
+          delimiter: '\n',
+          deviceDelimiter: '\n',
+          charset: 'utf-8',
+        });
+      }
+    } catch (error) {
+      console.warn('No se pudo conectar de forma activa, se usará escucha pasiva:', error);
+    }
+
+    const listenerTarget = connectedInstance && typeof connectedInstance.onDataReceived === 'function'
+      ? connectedInstance
+      : BluetoothClassic;
+
+    this.activeDevice = selectedDevice;
+    onStatus('connected', selectedDevice);
+
+    this.removeDataListener = listenerTarget.onDataReceived((event: any) => {
+      const telemetry = parseTelemetry(event?.data || '');
+      if (telemetry) onTelemetry(telemetry);
+    });
+  }
+
   stopPassiveTelemetryListener() {
     if (this.removeDataListener) {
       this.removeDataListener();
       this.removeDataListener = null;
     }
+    this.activeDevice = null;
   }
 }
 

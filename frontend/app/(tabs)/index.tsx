@@ -158,11 +158,17 @@ export default function HomeScreen() {
 
   const startPassiveBluetooth = useCallback(async () => {
     try {
-      await bluetoothTelemetryService.startPassiveTelemetryListener(
+      await bluetoothTelemetryService.startModuleTelemetry(
         [settings.device_name, 'HC-05', 'HC-10'],
-        (device) => {
-          setConnected(Boolean(device));
-          setConnectedDeviceName(device?.name ?? null);
+        (status, device) => {
+          if (status === 'connected' && device) {
+            setConnected(true);
+            setConnectedDeviceName(device.name);
+            return;
+          }
+
+          setConnected(false);
+          setConnectedDeviceName(null);
         },
         (incomingTelemetry) => {
           setTelemetry(incomingTelemetry);
