@@ -55,7 +55,6 @@
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
         <data android:scheme="crash"/>
-        <data android:scheme="exp+crash-app"/>
       </intent-filter>
     </activity>
   </application>

@@ -30,7 +30,7 @@ curl http://127.0.0.1:8000/
 >
 > Si abres la URL pública en el navegador (`https://...ngrok-free.dev/`) ahora debe responder JSON del backend.
 
-### 2) Frontend (Expo)
+### 2) Frontend (Android nativo APK)
 
 En otra terminal:
 
@@ -45,10 +45,17 @@ Crea un archivo `.env` dentro de `frontend/` con:
 EXPO_PUBLIC_BACKEND_URL=https://TU-SUBDOMINIO.ngrok-free.dev
 ```
 
-Luego inicia Expo:
+Instala dependencias y compila/instala el cliente Android nativo:
 
 ```bash
-npx expo start
+npm run android
+```
+
+Para generar APK:
+
+```bash
+npm run build:apk:debug
+npm run build:apk:release
 ```
 
 ## ⚠️ Por qué te aparece `400 Bad Request` en `/api/auth/register`

@@ -1,59 +1,57 @@
-# Welcome to your Expo app 👋
+# C.R.A.S.H Frontend (Android APK nativo)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Este frontend está configurado para ejecutarse como app **nativa de Android** (APK), sin usar Expo Go.
 
-## Get started
+## Requisitos
 
-1. Install dependencies
+- Node.js 18+
+- JDK 17
+- Android Studio + SDK de Android
 
-   ```bash
-   npm install
-   ```
+## Instalación
 
-2. Start the app
+```bash
+npm install
+```
 
-   ```bash
-   npx expo start
-   ```
+## Ejecutar en dispositivo/emulador Android (dev client nativo)
+
+```bash
+npm run android
+```
+
+## Generar APK
+
+### Debug APK
+
+```bash
+npm run build:apk:debug
+```
+
+Salida esperada:
+
+`android/app/build/outputs/apk/debug/app-debug.apk`
+
+### Release APK
+
+```bash
+npm run build:apk:release
+```
+
+Salida esperada:
+
+`android/app/build/outputs/apk/release/app-release.apk`
 
 ## Bluetooth telemetry (Arduino)
 
-- The Settings tab now includes a Classic Bluetooth scan/connect section to bind an HC-05 telemetry module.
-- The app expects serial payloads coming from HC-05 (SPP) with newline (`\\n`) delimiter.
-- Accepted payload formats from firmware:
-  - JSON: `{\"ax\":0.1,\"ay\":0.2,\"az\":1.0,\"gx\":0.0,\"gy\":0.0,\"gz\":0.0,\"g\":1.02}`
+- La pestaña Settings incluye escaneo/conexión por Bluetooth clásico para módulo HC-05/HC-06.
+- El módulo debe enviar datos seriales con delimitador de nueva línea (`\n`).
+- Formatos aceptados:
+  - JSON: `{"ax":0.1,"ay":0.2,"az":1.0,"gx":0.0,"gy":0.0,"gz":0.0,"g":1.02}`
   - CSV: `ax,ay,az,gx,gy,gz,g`
-- Compatible modules: HC-05 / HC-06 (Classic Bluetooth).
 
-In the output, you'll find options to open the app in a
+Si Bluetooth sigue fallando, verifica:
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
-```
-
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
-
-## Learn more
-
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+1. Permisos `BLUETOOTH_SCAN` y `BLUETOOTH_CONNECT` concedidos.
+2. Módulo HC-05 emparejado a nivel de Android antes de abrir la app.
+3. Que estés usando el APK nativo (no Expo Go).
