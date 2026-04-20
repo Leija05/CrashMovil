@@ -1,0 +1,29 @@
+{
+  "name": "crash-whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Business verification + emergency reports bot",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "lint": "eslint .",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "axios": "^1.13.2",
+    "bullmq": "^5.61.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "ioredis": "^5.8.2",
+    "mongoose": "^8.19.1",
+    "pino": "^10.1.0",
+    "pino-http": "^11.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

@@ -179,7 +179,4 @@ dependencies {
     } else {
         implementation jscFlavor
     }
-
-    // --- AGREGA ESTA LÍNEA AQUÍ ---
-    implementation project(':react-native-bluetooth-classic')
 }

@@ -38,7 +38,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
   // Local countdown state for the modal
   const [localCountdown, setLocalCountdown] = useState(settings.countdown_seconds);
   const [alertSent, setAlertSent] = useState(false);
-  const [smsSent, setSmsSent] = useState(false);
+  const [whatsAppSent, setWhatsAppSent] = useState(false);
   const [diagnosis, setDiagnosis] = useState<any>(null);
   const [loadingDiagnosis, setLoadingDiagnosis] = useState(false);
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -122,8 +122,8 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     fetchDiagnosis();
     
     // Message dispatch is backend-driven. Here we only reflect UI status.
-    if (settings.sms_enabled && contacts.length > 0 && impact) {
-      setSmsSent((impact.alerts_dispatched ?? 0) > 0);
+    if (contacts.length > 0 && impact) {
+      setWhatsAppSent((impact.alerts_dispatched ?? 0) > 0);
     }
     
     // Auto call primary contact after 3 seconds
@@ -137,7 +137,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
         }, 3000);
       }
     }
-  }, [contacts, fetchDiagnosis, impact, pulseAnim, settings.auto_call_enabled, settings.sms_enabled]);
+  }, [contacts, fetchDiagnosis, impact, pulseAnim, settings.auto_call_enabled]);
 
   const startCountdown = useCallback(() => {
     // Clear any existing interval first
@@ -163,7 +163,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
   
   // ============================================================
   // ALERT DISPATCH STATUS
-  // NOTE: real SMS/WhatsApp dispatch is handled by backend when impact is created.
+  // NOTE: real WhatsApp dispatch is handled by backend when impact is created.
   // ============================================================
   // ============================================================
   // END ALERT DISPATCH STATUS
@@ -174,7 +174,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
       // Reset state when modal opens
       setLocalCountdown(settings.countdown_seconds);
       setAlertSent(false);
-      setSmsSent(false);
+      setWhatsAppSent(false);
       alertSentRef.current = false;
       setDiagnosis(null);
       startCountdown();
@@ -261,27 +261,27 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
                 <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
                 <Text style={styles.alertSentText}>
                   {settings.language === 'es'
-                    ? (smsSent ? 'Alerta enviada' : 'Alerta no enviada')
-                    : (smsSent ? 'Alert sent' : 'Alert not sent')}
+                    ? (whatsAppSent ? 'Alerta enviada' : 'Alerta no enviada')
+                    : (whatsAppSent ? 'Alert sent' : 'Alert not sent')}
                 </Text>
               </View>
               
-              {/* SMS Status */}
-              <View style={styles.smsStatusContainer}>
+              {/* WhatsApp Status */}
+              <View style={styles.whatsappStatusContainer}>
                 <Ionicons 
-                  name={smsSent ? "chatbubble-ellipses" : "chatbubble-outline"} 
+                  name={whatsAppSent ? "logo-whatsapp" : "logo-whatsapp"} 
                   size={20} 
-                  color={smsSent ? "#4CAF50" : "#FF9800"} 
+                  color={whatsAppSent ? "#4CAF50" : "#FF9800"} 
                 />
-                <Text style={[styles.smsStatusText, { color: smsSent ? "#4CAF50" : "#FF9800" }]}>
+                <Text style={[styles.whatsappStatusText, { color: whatsAppSent ? "#4CAF50" : "#FF9800" }]}>
                   {settings.language === 'es' 
                     ? (
-                      smsSent
+                      whatsAppSent
                         ? 'Alerta enviada desde el backend a contactos de emergencia'
                         : 'No se pudo confirmar envío automático. Revisa configuración de WhatsApp Cloud API y contactos verificados.'
                     )
                     : (
-                      smsSent
+                      whatsAppSent
                         ? 'Alert dispatched from backend to emergency contacts'
                         : 'Automatic dispatch could not be confirmed. Check WhatsApp Cloud API config and verified contacts.'
                     )}
@@ -409,7 +409,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginLeft: 10,
   },
-  smsStatusContainer: {
+  whatsappStatusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -419,7 +419,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderRadius: 10,
   },
-  smsStatusText: {
+  whatsappStatusText: {
     fontSize: 14,
     marginLeft: 8,
   },
