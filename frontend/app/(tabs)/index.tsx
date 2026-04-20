@@ -19,6 +19,7 @@ import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { EmergencyModal } from '../../src/components/EmergencyModal';
 import { CrashLogo } from '../../src/components/CrashLogo';
 import { bluetoothTelemetryService } from '../../src/services/bluetooth';
+import { buildSafetyInsight } from '../../src/utils/safetyInsights';
 
 const IMPACT_COOLDOWN_MS = 12000;
 
@@ -216,6 +217,10 @@ export default function HomeScreen() {
     }
   };
 
+  const insight = buildSafetyInsight(telemetry, impacts, settings.impact_threshold);
+  const insightColor =
+    insight.level === 'stable' ? '#22c55e' : insight.level === 'caution' ? '#f59e0b' : '#ef4444';
+
   return (
     <SafeAreaView style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}>
       <ScrollView
@@ -285,6 +290,33 @@ export default function HomeScreen() {
               maxValue={Math.max(3, settings.impact_threshold + 3)}
             />
           )}
+        </View>
+
+        <View style={[styles.section, isDark ? styles.cardDark : styles.cardLight]}>
+          <View style={styles.safetyHeader}>
+            <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
+              {settings.language === 'es' ? 'Radar preventivo IA' : 'AI preventive radar'}
+            </Text>
+            <View style={[styles.riskPill, { backgroundColor: `${insightColor}33` }]}>
+              <Ionicons name="pulse" size={14} color={insightColor} />
+              <Text style={[styles.riskPillText, { color: insightColor }]}>
+                {insight.level === 'stable'
+                  ? (settings.language === 'es' ? 'Estable' : 'Stable')
+                  : insight.level === 'caution'
+                    ? (settings.language === 'es' ? 'Precaución' : 'Caution')
+                    : (settings.language === 'es' ? 'Alto riesgo' : 'High risk')}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.safetyGaugeTrack}>
+            <View style={[styles.safetyGaugeFill, { width: `${insight.score}%`, backgroundColor: insightColor }]} />
+          </View>
+          <Text style={[styles.safetyScoreText, isDark ? styles.textDark : styles.textLight]}>
+            {settings.language === 'es' ? 'Safety Score' : 'Safety Score'}: {insight.score}/100
+          </Text>
+          <Text style={[styles.safetyRecommendation, isDark ? styles.subtitleDark : styles.subtitleLight]}>
+            {settings.language === 'es' ? insight.recommendationEs : insight.recommendationEn}
+          </Text>
         </View>
 
         {impacts.length > 0 && (
@@ -361,4 +393,12 @@ const styles = StyleSheet.create({
   impactItem: { borderLeftWidth: 4, backgroundColor: 'rgba(30,41,59,0.4)', padding: 12, borderRadius: 10, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   impactG: { fontSize: 22, fontWeight: '900' },
   impactMeta: { color: '#94a3b8', fontSize: 12, marginTop: 2 },
+
+  safetyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  riskPill: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  riskPillText: { fontWeight: '700', fontSize: 12 },
+  safetyGaugeTrack: { height: 12, backgroundColor: 'rgba(148,163,184,0.2)', borderRadius: 999, overflow: 'hidden' },
+  safetyGaugeFill: { height: '100%', borderRadius: 999 },
+  safetyScoreText: { marginTop: 10, fontWeight: '800', fontSize: 16 },
+  safetyRecommendation: { marginTop: 6, lineHeight: 20, fontSize: 13 },
 });
