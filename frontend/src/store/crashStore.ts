@@ -35,7 +35,7 @@ export interface DeviceSettings {
   countdown_seconds: number;
   auto_call_enabled: boolean;
   sms_enabled: boolean;
-  message_type: 'sms' | 'whatsapp';
+  message_type: 'whatsapp';
   language: 'es' | 'en';
   theme: 'dark' | 'light';
 }
@@ -107,8 +107,8 @@ const defaultSettings: DeviceSettings = {
   impact_threshold: 5.0,
   countdown_seconds: 30,
   auto_call_enabled: true,
-  sms_enabled: true,
-  message_type: 'sms',
+  sms_enabled: false,
+  message_type: 'whatsapp',
   language: 'es',
   theme: 'dark',
 };

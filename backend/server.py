@@ -164,8 +164,8 @@ class DeviceSettings(BaseModel):
     impact_threshold: float = 5.0
     countdown_seconds: int = 30
     auto_call_enabled: bool = True
-    sms_enabled: bool = True
-    message_type: str = "sms"  # sms | whatsapp
+    sms_enabled: bool = False
+    message_type: str = "whatsapp"  # whatsapp only
     language: str = "es"
     theme: str = "dark"
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -283,12 +283,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     return User(**sanitize_doc(user_doc))
 
 
+
+
+
+def normalize_settings_channel(settings: DeviceSettings) -> DeviceSettings:
+    if settings.message_type != "whatsapp" or settings.sms_enabled:
+        settings.message_type = "whatsapp"
+        settings.sms_enabled = False
+    return settings
+
 async def get_or_create_settings(owner_id: str) -> DeviceSettings:
     settings_doc = await db.device_settings.find_one({"owner_id": owner_id})
     if settings_doc:
-        return DeviceSettings(**sanitize_doc(settings_doc))
+        settings = normalize_settings_channel(DeviceSettings(**sanitize_doc(settings_doc)))
+        await db.device_settings.update_one(
+            {"owner_id": owner_id},
+            {"$set": {"message_type": settings.message_type, "sms_enabled": settings.sms_enabled}}
+        )
+        return settings
 
-    settings = DeviceSettings(owner_id=owner_id)
+    settings = normalize_settings_channel(DeviceSettings(owner_id=owner_id))
     await db.device_settings.insert_one(settings.model_dump())
     return settings
 
@@ -519,7 +533,7 @@ async def dispatch_emergency_alerts(
 
     message = format_alert_message(impact, diagnosis)
     results: List[AlertDispatchResult] = []
-    message_channel_enabled = settings.sms_enabled or settings.message_type == "whatsapp"
+    message_channel_enabled = settings.message_type == "whatsapp"
 
     logging.info(
         "Dispatch config owner_id=%s -> message_type=%s, message_channel_enabled=%s, auto_call_enabled=%s, verified_contacts=%s",
@@ -977,6 +991,8 @@ async def update_settings(
     current_user: User = Depends(get_current_user),
 ) -> DeviceSettings:
     update_data = {k: v for k, v in settings.model_dump().items() if v is not None}
+    update_data["message_type"] = "whatsapp"
+    update_data["sms_enabled"] = False
     update_data["updated_at"] = datetime.now(timezone.utc)
 
     await get_or_create_settings(current_user.id)

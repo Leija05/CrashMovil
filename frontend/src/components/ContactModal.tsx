@@ -26,45 +26,55 @@ interface ContactModalProps {
 }
 
 const RELATIONSHIPS = ['family', 'friend', 'spouse', 'parent', 'sibling', 'other'];
+const PHONE_PREFIXES = ['+52', '+1', '+57', '+34', '+54'];
 
 export const ContactModal: React.FC<ContactModalProps> = ({ visible, onClose, onSave, contact }) => {
   const { t } = useTranslation();
   const { settings } = useCrashStore();
   const isDark = settings.theme === 'dark';
-  
+
   const [name, setName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [localPhone, setLocalPhone] = useState('');
+  const [phonePrefix, setPhonePrefix] = useState('+52');
   const [relationship, setRelationship] = useState('family');
   const [isPrimary, setIsPrimary] = useState(false);
-  
+
   useEffect(() => {
-    if (visible) {
-      if (contact) {
-        setName(contact.name);
-        setPhone(contact.phone);
-        setRelationship(contact.relationship);
-        setIsPrimary(contact.is_primary);
-      } else {
-        setName('');
-        setPhone('');
-        setRelationship('family');
-        setIsPrimary(false);
-      }
+    if (!visible) return;
+
+    if (contact) {
+      const cleaned = contact.phone.replace(/\s+/g, '');
+      const detectedPrefix = PHONE_PREFIXES.find((prefix) => cleaned.startsWith(prefix)) || '+52';
+      const strippedLocal = cleaned.replace(detectedPrefix, '').replace(/\D/g, '');
+
+      setName(contact.name);
+      setPhonePrefix(detectedPrefix);
+      setLocalPhone(strippedLocal);
+      setRelationship(contact.relationship);
+      setIsPrimary(contact.is_primary);
+    } else {
+      setName('');
+      setPhonePrefix('+52');
+      setLocalPhone('');
+      setRelationship('family');
+      setIsPrimary(false);
     }
   }, [contact, visible]);
-  
+
+  const formatLocalPhone = (value: string) => value.replace(/\D/g, '').slice(0, 14);
+
   const handleSave = () => {
-    if (name.trim() && phone.trim()) {
-      onSave({
-        name: name.trim(),
-        phone: phone.trim(),
-        relationship,
-        is_primary: isPrimary,
-      });
-      onClose();
-    }
+    if (!name.trim() || !localPhone.trim()) return;
+
+    onSave({
+      name: name.trim(),
+      phone: `${phonePrefix}${localPhone}`,
+      relationship,
+      is_primary: isPrimary,
+    });
+    onClose();
   };
-  
+
   return (
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.overlay}>
@@ -73,7 +83,6 @@ export const ContactModal: React.FC<ContactModalProps> = ({ visible, onClose, on
           style={styles.keyboardView}
         >
           <View style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}>
-            {/* Header */}
             <View style={styles.header}>
               <Text style={[styles.title, isDark ? styles.textDark : styles.textLight]}>
                 {contact ? t('edit') : t('addContact')}
@@ -82,48 +91,57 @@ export const ContactModal: React.FC<ContactModalProps> = ({ visible, onClose, on
                 <Ionicons name="close" size={24} color={isDark ? '#fff' : '#000'} />
               </TouchableOpacity>
             </View>
-            
-            {/* Form Content */}
-            <ScrollView 
+
+            <ScrollView
               style={styles.formScrollView}
               contentContainerStyle={styles.formContent}
               keyboardShouldPersistTaps="handled"
             >
-              {/* Name Input */}
               <View style={styles.fieldContainer}>
-                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>
-                  {t('name')}
-                </Text>
+                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>{t('name')}</Text>
                 <TextInput
                   style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
                   value={name}
                   onChangeText={setName}
                   placeholder={settings.language === 'es' ? 'Nombre completo' : 'Full name'}
-                  placeholderTextColor="#888"
+                  placeholderTextColor="#8892a0"
                   autoCapitalize="words"
                 />
               </View>
-              
-              {/* Phone Input */}
+
               <View style={styles.fieldContainer}>
-                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>
-                  {t('phone')}
-                </Text>
-                <TextInput
-                  style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
-                  value={phone}
-                  onChangeText={setPhone}
-                  placeholder="+52 123 456 7890"
-                  placeholderTextColor="#888"
-                  keyboardType="phone-pad"
-                />
+                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>{t('phone')}</Text>
+                <View style={styles.prefixContainer}>
+                  {PHONE_PREFIXES.map((prefix) => (
+                    <TouchableOpacity
+                      key={prefix}
+                      style={[styles.prefixChip, phonePrefix === prefix && styles.prefixChipActive]}
+                      onPress={() => setPhonePrefix(prefix)}
+                    >
+                      <Text style={phonePrefix === prefix ? styles.prefixTextActive : styles.prefixText}>
+                        {prefix}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                <View style={styles.phoneRow}>
+                  <View style={styles.prefixIndicator}>
+                    <Text style={styles.prefixIndicatorText}>{phonePrefix}</Text>
+                  </View>
+                  <TextInput
+                    style={[styles.phoneInput, isDark ? styles.inputDark : styles.inputLight]}
+                    value={localPhone}
+                    onChangeText={(value) => setLocalPhone(formatLocalPhone(value))}
+                    placeholder={settings.language === 'es' ? '5512345678' : '5512345678'}
+                    placeholderTextColor="#8892a0"
+                    keyboardType="phone-pad"
+                  />
+                </View>
               </View>
-              
-              {/* Relationship */}
+
               <View style={styles.fieldContainer}>
-                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>
-                  {t('relationship')}
-                </Text>
+                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight]}>{t('relationship')}</Text>
                 <View style={styles.relationshipContainer}>
                   {RELATIONSHIPS.map((rel) => (
                     <TouchableOpacity
@@ -135,37 +153,35 @@ export const ContactModal: React.FC<ContactModalProps> = ({ visible, onClose, on
                       ]}
                       onPress={() => setRelationship(rel)}
                     >
-                      <Text
-                        style={[
-                          styles.relationshipText,
-                          relationship === rel && styles.relationshipTextActive,
-                        ]}
-                      >
+                      <Text style={[styles.relationshipText, relationship === rel && styles.relationshipTextActive]}>
                         {t(rel)}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
               </View>
-              
-              {/* Primary Contact Switch */}
-              <View style={styles.switchRow}>
-                <Text style={[styles.label, isDark ? styles.textDark : styles.textLight, { marginBottom: 0 }]}>
-                  {t('primaryContact')}
-                </Text>
+
+              <View style={styles.switchCard}>
+                <View>
+                  <Text style={[styles.label, isDark ? styles.textDark : styles.textLight, { marginBottom: 2 }]}>
+                    {t('primaryContact')}
+                  </Text>
+                  <Text style={styles.switchHint}>
+                    {settings.language === 'es' ? 'Recibirá prioridad para llamada automática.' : 'Will be prioritized for automatic call.'}
+                  </Text>
+                </View>
                 <Switch
                   value={isPrimary}
                   onValueChange={setIsPrimary}
-                  trackColor={{ false: '#767577', true: '#00d9ff' }}
-                  thumbColor={isPrimary ? '#fff' : '#f4f3f4'}
+                  trackColor={{ false: '#475569', true: '#06b6d4' }}
+                  thumbColor="#fff"
                 />
               </View>
             </ScrollView>
-            
-            {/* Buttons */}
+
             <View style={styles.buttons}>
-              <TouchableOpacity 
-                style={[styles.cancelButton, isDark ? styles.cancelButtonDark : styles.cancelButtonLight]} 
+              <TouchableOpacity
+                style={[styles.cancelButton, isDark ? styles.cancelButtonDark : styles.cancelButtonLight]}
                 onPress={onClose}
               >
                 <Text style={styles.cancelButtonText}>{t('cancel')}</Text>
@@ -184,23 +200,23 @@ export const ContactModal: React.FC<ContactModalProps> = ({ visible, onClose, on
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'rgba(1, 8, 20, 0.72)',
     justifyContent: 'flex-end',
   },
   keyboardView: {
     justifyContent: 'flex-end',
   },
   container: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    paddingTop: 20,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 18,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 20,
-    minHeight: height * 0.55,
-    maxHeight: height * 0.85,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 22,
+    minHeight: height * 0.6,
+    maxHeight: height * 0.9,
   },
   containerDark: {
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#0b1220',
   },
   containerLight: {
     backgroundColor: '#ffffff',
@@ -209,20 +225,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 18,
   },
   title: {
-    fontSize: 22,
-    fontWeight: 'bold',
+    fontSize: 30,
+    fontWeight: '800',
   },
   closeIcon: {
-    padding: 5,
+    padding: 8,
   },
   textDark: {
     color: '#ffffff',
   },
   textLight: {
-    color: '#000000',
+    color: '#0f172a',
   },
   formScrollView: {
     flex: 1,
@@ -231,26 +247,69 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   fieldContainer: {
-    marginBottom: 20,
+    marginBottom: 18,
   },
   label: {
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     marginBottom: 10,
   },
   input: {
-    borderRadius: 12,
+    borderRadius: 14,
     padding: 16,
     fontSize: 16,
-    minHeight: 52,
+    minHeight: 54,
   },
   inputDark: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#1e293b',
     color: '#fff',
   },
   inputLight: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    color: '#000',
+    backgroundColor: '#f1f5f9',
+    color: '#0f172a',
+  },
+  prefixContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 10,
+  },
+  prefixChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(148,163,184,0.25)',
+  },
+  prefixChipActive: {
+    backgroundColor: 'rgba(34,211,238,0.3)',
+    borderWidth: 1,
+    borderColor: '#22d3ee',
+  },
+  prefixText: { color: '#94a3b8', fontWeight: '600' },
+  prefixTextActive: { color: '#22d3ee', fontWeight: '700' },
+  phoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  prefixIndicator: {
+    paddingHorizontal: 12,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#0ea5e9',
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  prefixIndicatorText: {
+    color: '#001019',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  phoneInput: {
+    flex: 1,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
   },
   relationshipContainer: {
     flexDirection: 'row',
@@ -265,62 +324,68 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   relationshipButtonDark: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#1e293b',
   },
   relationshipButtonLight: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: '#e2e8f0',
   },
   relationshipButtonActive: {
-    backgroundColor: 'rgba(0,217,255,0.2)',
-    borderColor: '#00d9ff',
+    backgroundColor: 'rgba(34,211,238,0.15)',
+    borderColor: '#22d3ee',
   },
   relationshipText: {
-    color: '#888',
+    color: '#94a3b8',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   relationshipTextActive: {
-    color: '#00d9ff',
+    color: '#22d3ee',
   },
-  switchRow: {
+  switchCard: {
+    marginTop: 8,
+    borderRadius: 14,
+    padding: 14,
+    backgroundColor: 'rgba(30,41,59,0.35)',
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 10,
-    paddingVertical: 10,
+  },
+  switchHint: {
+    color: '#94a3b8',
+    fontSize: 12,
   },
   buttons: {
     flexDirection: 'row',
-    gap: 15,
+    gap: 12,
     marginTop: 10,
   },
   cancelButton: {
     flex: 1,
-    padding: 16,
     borderRadius: 12,
+    paddingVertical: 14,
     alignItems: 'center',
   },
   cancelButtonDark: {
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: '#334155',
   },
   cancelButtonLight: {
-    backgroundColor: 'rgba(0,0,0,0.05)',
+    backgroundColor: '#cbd5e1',
   },
   cancelButtonText: {
-    color: '#888',
+    color: '#fff',
+    fontWeight: '700',
     fontSize: 16,
-    fontWeight: '600',
   },
   saveButton: {
     flex: 1,
-    padding: 16,
     borderRadius: 12,
-    backgroundColor: '#00d9ff',
+    paddingVertical: 14,
+    backgroundColor: '#22d3ee',
     alignItems: 'center',
   },
   saveButtonText: {
-    color: '#000',
+    color: '#001018',
+    fontWeight: '800',
     fontSize: 16,
-    fontWeight: '600',
   },
 });
