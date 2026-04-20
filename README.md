@@ -235,3 +235,17 @@ npm run dev
 ```
 
 Más detalles y payloads reales en `whatsapp-bot-node/README.md`.
+
+### Plantillas de WhatsApp recomendadas (Meta)
+
+Para el backend principal (`backend/server.py`) crea estas plantillas y configura sus variables en `.env`:
+
+- `WHATSAPP_OTP_TEMPLATE_NAME=crash_verification_token`
+- `WHATSAPP_OTP_TEMPLATE_LANGUAGE=es_MX`
+- `WHATSAPP_COLLISION_TEMPLATE_NAME=crash_collision_diagnosis`
+- `WHATSAPP_COLLISION_TEMPLATE_LANGUAGE=es_MX`
+
+Además se mantiene la plantilla de fallback de 24h:
+
+- `WHATSAPP_TEMPLATE_NAME=emergency_alert`
+- `WHATSAPP_TEMPLATE_LANGUAGE=es_MX`
