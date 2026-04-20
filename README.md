@@ -215,3 +215,23 @@ Además:
 - El sistema identifica al usuario con su token.
 - Los contactos de emergencia deben aceptar (*opt-in*) para poder recibir alertas.
 - La base de datos es central, pero separa información por usuario para que cada quien vea solo lo suyo.
+
+## 🤖 Nuevo servicio Node.js para WhatsApp Business (OTP + Reportes)
+
+Se agregó un servicio independiente en `whatsapp-bot-node/` con Express + MongoDB para:
+
+- Registro de usuario con contacto de emergencia
+- Envío y validación de OTP con expiración
+- Webhook oficial de WhatsApp Cloud API
+- Envío de reporte y ubicación automática
+
+Guía completa:
+
+```bash
+cd whatsapp-bot-node
+cp .env.example .env
+npm install
+npm run dev
+```
+
+Más detalles y payloads reales en `whatsapp-bot-node/README.md`.

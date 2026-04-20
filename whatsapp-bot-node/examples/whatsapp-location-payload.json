@@ -1,0 +1,11 @@
+{
+  "messaging_product": "whatsapp",
+  "to": "+525511112222",
+  "type": "location",
+  "location": {
+    "latitude": 19.4326077,
+    "longitude": -99.133208,
+    "name": "Ubicación de emergencia",
+    "address": "Ciudad de México"
+  }
+}

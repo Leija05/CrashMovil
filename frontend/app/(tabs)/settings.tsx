@@ -21,7 +21,7 @@ import i18n from '../../src/i18n';
 import {
   bluetoothTelemetryService,
   bluetoothDeviceNameMatcher,
-  isBluetoothClassicAvailable,
+  isBluetoothLeAvailable,
 } from '../../src/services/bluetooth';
 
 export default function SettingsScreen() {
@@ -61,16 +61,16 @@ export default function SettingsScreen() {
 
   const detectPairedModule = async () => {
     if (Platform.OS !== 'android') {
-      Alert.alert('Android only', 'HC-05/HC-10 por Bluetooth clásico solo está disponible en Android.');
+      Alert.alert('Android only', 'Escaneo Bluetooth LE para HM-10/HC-05 solo está disponible en Android.');
       return;
     }
 
-    if (!isBluetoothClassicAvailable()) {
+    if (!isBluetoothLeAvailable()) {
       Alert.alert(
-        settings.language === 'es' ? 'Módulo Bluetooth no disponible' : 'Bluetooth module unavailable',
+        settings.language === 'es' ? 'Módulo Bluetooth LE no disponible' : 'Bluetooth module unavailable',
         settings.language === 'es'
-          ? 'Esta build no incluye soporte nativo para Bluetooth clásico.'
-          : 'This build does not include native Classic Bluetooth support.'
+          ? 'Esta build no incluye soporte nativo para Bluetooth LE.'
+          : 'This build does not include native BLE support.'
       );
       return;
     }
@@ -81,11 +81,11 @@ export default function SettingsScreen() {
         deviceName,
         settings.device_name,
         'HC-05',
-        'HC-10',
+        'HM-10',
       ]);
 
       const match = candidates.find((device) =>
-        bluetoothDeviceNameMatcher(device.name, [deviceName, settings.device_name, 'HC-05', 'HC-10'])
+        bluetoothDeviceNameMatcher(device.name, [deviceName, settings.device_name, 'HC-05', 'HM-10'])
       );
 
       if (!match) {
@@ -95,8 +95,8 @@ export default function SettingsScreen() {
         Alert.alert(
           settings.language === 'es' ? 'Sin coincidencias' : 'No matches',
           settings.language === 'es'
-            ? 'No se encontró un dispositivo emparejado llamado HC-05 o HC-10.'
-            : 'No paired device named HC-05 or HC-10 was found.'
+            ? 'No se encontró un dispositivo BLE llamado HC-05 o HM-10.'
+            : 'No BLE device named HC-05 or HM-10 was found.'
         );
         return;
       }
@@ -141,7 +141,7 @@ export default function SettingsScreen() {
               style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
               value={deviceName}
               onChangeText={setDeviceName}
-              placeholder="HC-05"
+              placeholder="HM-10"
               placeholderTextColor="#888"
             />
             <TouchableOpacity style={styles.saveButton} onPress={handleDeviceNameSave}>
@@ -153,21 +153,21 @@ export default function SettingsScreen() {
         <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
-              {settings.language === 'es' ? 'Detección Bluetooth pasiva' : 'Passive Bluetooth detection'}
+              {settings.language === 'es' ? 'Detección pasiva Bluetooth LE' : 'Passive Bluetooth LE detection'}
             </Text>
             {isScanning && <ActivityIndicator size="small" color="#00d9ff" />}
           </View>
           <Text style={styles.sectionSubtitle}>
             {settings.language === 'es'
-              ? 'La app NO inicia conexión Bluetooth. Solo valida si el teléfono ya está emparejado con HC-05/HC-10 y escucha la telemetría.'
-              : 'App does NOT initiate Bluetooth connection. It only validates if phone is already paired with HC-05/HC-10 and listens for telemetry.'}
+              ? 'La app inicia exploración BLE y se suscribe a notificaciones del módulo HM-10/HC-05 para telemetría.'
+              : 'App starts BLE scan and subscribes to HM-10/HC-05 notifications for telemetry.'}
           </Text>
           <TouchableOpacity style={styles.scanButton} onPress={detectPairedModule} disabled={isScanning}>
             <Ionicons name="bluetooth" size={18} color="#fff" />
             <Text style={styles.scanButtonText}>
               {isScanning
                 ? (settings.language === 'es' ? 'Detectando...' : 'Detecting...')
-                : (settings.language === 'es' ? 'Detectar módulo emparejado' : 'Detect paired module')}
+                : (settings.language === 'es' ? 'Buscar módulo BLE' : 'Detect paired module')}
             </Text>
           </TouchableOpacity>
           {!!detectedName && (

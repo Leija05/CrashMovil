@@ -96,7 +96,7 @@ export default function HomeScreen() {
         settings.language === 'es' ? 'Error registrando impacto' : 'Impact registration error',
         settings.language === 'es'
           ? 'No se pudo registrar el impacto recibido del módulo Bluetooth.'
-          : 'Could not register impact received from Bluetooth module.'
+          : 'Could not register impact received from Bluetooth LE module.'
       );
     }
   }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, settings.impact_threshold, settings.language, telemetry, user]);
@@ -159,7 +159,7 @@ export default function HomeScreen() {
   const startPassiveBluetooth = useCallback(async () => {
     try {
       await bluetoothTelemetryService.startPassiveTelemetryListener(
-        [settings.device_name, 'HC-05', 'HC-10'],
+        [settings.device_name, 'HC-05', 'HM-10'],
         (device) => {
           setConnected(Boolean(device));
           setConnectedDeviceName(device?.name ?? null);
