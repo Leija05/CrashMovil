@@ -207,6 +207,31 @@ export default function SettingsScreen() {
         </View>
 
         <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
+              {settings.language === 'es' ? 'Tiempo para cancelar alerta' : 'Alert cancellation timer'}
+            </Text>
+            <Text style={styles.valueText}>{settings.countdown_seconds}s</Text>
+          </View>
+          <Slider
+            style={styles.slider}
+            minimumValue={10}
+            maximumValue={60}
+            step={5}
+            value={settings.countdown_seconds}
+            onSlidingComplete={(value) => handleUpdateSettings({ countdown_seconds: value })}
+            minimumTrackTintColor="#22d3ee"
+            maximumTrackTintColor="#1e293b"
+            thumbTintColor="#22d3ee"
+          />
+          <Text style={styles.switchHint}>
+            {settings.language === 'es'
+              ? 'Entre más alto el valor, más tiempo para cancelar falsa alarma.'
+              : 'Higher values give more time to cancel false alarms.'}
+          </Text>
+        </View>
+
+        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.toggleRow}>
             <View>
               <Text style={[styles.toggleLabel, isDark ? styles.textDark : styles.textLight]}>{t('autoCall')}</Text>
