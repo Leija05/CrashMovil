@@ -205,21 +205,21 @@ export default function HomeScreen() {
         </Animated.View>
 
         <View style={styles.bentoGrid}>
-          <TouchableOpacity activeOpacity={0.85} onPress={() => router.push('/contacts')}>
-            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+          <TouchableOpacity activeOpacity={0.85} style={styles.bentoHalf} onPress={() => router.push('/contacts')}>
+            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
               <Text style={[styles.cardLabel, { color: isDark ? '#cbd5e1' : '#334155' }]}>Contactos de emergencia</Text>
               <Text style={[styles.cardValue, { color: isDark ? '#fff' : '#0f172a' }]}>{stats.total_impacts}</Text>
             </BlurView>
           </TouchableOpacity>
 
-          <TouchableOpacity activeOpacity={0.85} onPress={() => router.push('/profile')}>
-            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+          <TouchableOpacity activeOpacity={0.85} style={styles.bentoHalf} onPress={() => router.push('/profile')}>
+            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
               <Text style={[styles.cardLabel, { color: isDark ? '#cbd5e1' : '#334155' }]}>Perfil médico</Text>
               <Text style={[styles.cardValue, { color: isDark ? '#fff' : '#0f172a' }]}>{user ? 'Activo' : 'Pendiente'}</Text>
             </BlurView>
           </TouchableOpacity>
 
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, styles.fullCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}> 
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, styles.fullCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}>
             <Text style={[styles.sectionTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en tiempo real</Text>
             <View style={styles.telemetryRow}>
               <View style={styles.metric}><Text style={styles.metricLabel}>GX</Text><Text style={styles.metricValue}>{telemetry.gyro_x.toFixed(0)}</Text></View>
@@ -230,10 +230,17 @@ export default function HomeScreen() {
             {history.length > 5 && (
               <TelemetryChart
                 data={history.map((value) => ({ value }))}
-                title="magnitudG"
+                title="Gráfica de grados de fuerza (magnitud G)"
                 color={impactAlert ? '#ef4444' : '#22d3ee'}
                 maxValue={Math.max(3, settings.impact_threshold + 3)}
+                threshold={settings.impact_threshold}
+                unit="G"
               />
+            )}
+            {history.length <= 5 && (
+              <Text style={styles.chartHint}>
+                Esperando muestras de telemetría para dibujar la curva de fuerza G…
+              </Text>
             )}
           </BlurView>
         </View>
@@ -259,14 +266,16 @@ const styles = StyleSheet.create({
   dot: { width: 10, height: 10, borderRadius: 999, marginRight: 8 },
   statusText: { fontWeight: '800' },
   bentoGrid: { marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  bentoCard: { width: '48%', minHeight: 122, borderRadius: 18, borderWidth: 1, padding: 14, overflow: 'hidden' },
+  bentoHalf: { width: '48%' },
+  bentoCard: { width: '100%', minHeight: 122, borderRadius: 18, borderWidth: 1, padding: 14, overflow: 'hidden' },
   fullCard: { width: '100%', minHeight: 260 },
-  cardLabel: { fontSize: 13, fontWeight: '600' },
+  cardLabel: { fontSize: 14, fontWeight: '700', lineHeight: 18 },
   cardValue: { marginTop: 10, fontSize: 24, fontWeight: '900' },
   sectionTitle: { fontSize: 24, fontWeight: '900', marginBottom: 12 },
   telemetryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
   metric: { flex: 1, minWidth: '23%', backgroundColor: 'rgba(15,23,42,0.55)', borderRadius: 12, padding: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   metricLabel: { color: '#94a3b8', fontWeight: '700', textAlign: 'center' },
   metricValue: { color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center', marginTop: 4 },
+  chartHint: { marginTop: 12, color: '#94a3b8', fontWeight: '600', textAlign: 'center' },
   footerCard: { marginTop: 12, borderRadius: 16, borderWidth: 1, padding: 14 },
 });
