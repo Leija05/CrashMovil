@@ -72,6 +72,16 @@ export default function HomeScreen() {
   const lastImpactAt = useRef(0);
   const heroAnim = useRef(new Animated.Value(0)).current;
 
+  // NUEVO: Refs para evitar cierres (closures) obsoletos en el listener de alta frecuencia
+  const telemetryRef = useRef(telemetry);
+  const settingsRef = useRef(settings);
+
+  // Sincronizamos los refs cada vez que el estado cambia
+  useEffect(() => {
+    telemetryRef.current = telemetry;
+    settingsRef.current = settings;
+  }, [telemetry, settings]);
+
   const glass = isDark
     ? { borderColor: '#1f3356', bg: 'rgba(10,24,51,0.86)' }
     : { borderColor: 'rgba(15,23,42,0.16)', bg: 'rgba(255,255,255,0.82)' };
@@ -98,14 +108,15 @@ export default function HomeScreen() {
   );
 
   const startBluetooth = useCallback(async () => {
+    // Usamos las propiedades de los refs para que el listener siempre tenga data fresca
     await bluetoothTelemetryService.startPassiveTelemetryListener(
-      [settings.device_name, 'HC-05', 'HM-10'],
+      [settingsRef.current.device_name, 'HC-05', 'HM-10'],
       (device) => {
         setConnected(Boolean(device));
         setConnectedDeviceName(device?.name ?? null);
         if (!device) {
           setSensorOffline(true);
-          notify(settings.language === 'es' ? 'Sensor desconectado' : 'Sensor disconnected');
+          notify(settingsRef.current.language === 'es' ? 'Sensor desconectado' : 'Sensor disconnected');
         }
       },
       (incomingTelemetry) => {
@@ -115,10 +126,14 @@ export default function HomeScreen() {
         setHistory((prev) => [...prev.slice(-59), incomingTelemetry.g_force]);
       },
     );
-  }, [setConnected, setConnectedDeviceName, setTelemetry, settings.device_name, settings.language]);
+  }, [setConnected, setConnectedDeviceName, setTelemetry]);
 
   const triggerImpactFlow = useCallback(async () => {
-    if (!isConnected || telemetry.g_force < settings.impact_threshold || !user) return;
+    // Acceso mediante refs para garantizar tiempo real extremo
+    const currentT = telemetryRef.current;
+    const currentS = settingsRef.current;
+
+    if (!isConnected || currentT.g_force < currentS.impact_threshold || !user) return;
     const now = Date.now();
     if (now - lastImpactAt.current < IMPACT_COOLDOWN_MS) return;
     lastImpactAt.current = now;
@@ -127,13 +142,13 @@ export default function HomeScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
 
     const response = await impactsApi.create({
-      g_force: telemetry.g_force,
-      acceleration_x: telemetry.acceleration_x,
-      acceleration_y: telemetry.acceleration_y,
-      acceleration_z: telemetry.acceleration_z,
-      gyro_x: telemetry.gyro_x,
-      gyro_y: telemetry.gyro_y,
-      gyro_z: telemetry.gyro_z,
+      g_force: currentT.g_force,
+      acceleration_x: currentT.acceleration_x,
+      acceleration_y: currentT.acceleration_y,
+      acceleration_z: currentT.acceleration_z,
+      gyro_x: currentT.gyro_x,
+      gyro_y: currentT.gyro_y,
+      gyro_z: currentT.gyro_z,
       latitude: currentLocation?.latitude,
       longitude: currentLocation?.longitude,
     });
@@ -141,19 +156,25 @@ export default function HomeScreen() {
     setCurrentImpact(response.data);
     setEmergencyActive(true);
     setImpacts([response.data, ...impacts]);
-  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, settings.impact_threshold, telemetry, user]);
+  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, user]);
 
   useEffect(() => {
     Animated.timing(heroAnim, { toValue: 1, duration: 550, useNativeDriver: true }).start();
     startBluetooth().catch(() => undefined);
 
     const timer = setInterval(() => {
-      const timedOut = Date.now() - lastTelemetryAt.current > SENSOR_TIMEOUT_MS;
+      const now = Date.now();
+      // Aumentamos el margen a 5000ms para compensar la latencia del HC-05
+      const timedOut = now - lastTelemetryAt.current > 5000;
+
       if (timedOut && !sensorOffline) {
         setSensorOffline(true);
-        notify(settings.language === 'es' ? 'Sin telemetría en tiempo real' : 'Telemetry timeout');
+        // Solo notificamos si realmente hay una conexión activa pero vacía
+        if (isConnected) {
+          notify(settingsRef.current.language === 'es' ? 'Buscando datos del sensor...' : 'Waiting for sensor data...');
+        }
       }
-    }, 1000);
+    }, 2000); // Verificamos cada 2 segundos para no saturar el hilo principal
 
     Location.requestForegroundPermissionsAsync()
       .then(({ status }) => (status === 'granted' ? Location.getCurrentPositionAsync({}) : null))
@@ -168,7 +189,7 @@ export default function HomeScreen() {
       clearInterval(timer);
       bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
-  }, [heroAnim, sensorOffline, setCurrentLocation, settings.language, startBluetooth]);
+  }, [heroAnim, startBluetooth, isConnected]); // Se eliminó sensorOffline de aquí para evitar ciclos infinitos
 
   useEffect(() => {
     triggerImpactFlow().catch(() => undefined);
@@ -223,7 +244,7 @@ export default function HomeScreen() {
         </Animated.View>
 
         <View style={styles.statsRow}>
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
             <Text style={styles.statLabel}>Batería</Text>
             <View style={styles.batteryHeader}>
               <Ionicons name="battery-half" size={18} color={batteryTone} />
@@ -234,20 +255,20 @@ export default function HomeScreen() {
             </View>
           </BlurView>
 
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
             <Text style={styles.statLabel}>Registros</Text>
             <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{stats.real_impacts}</Text>
             <Text style={styles.statHint}>Contactos: {contacts.length}</Text>
           </BlurView>
 
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
             <Text style={styles.statLabel}>Ubicación</Text>
             <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{currentLocation ? 'GPS' : '--'}</Text>
             <Text style={styles.statHint}>{currentLocation ? 'Disponible' : 'Sin señal'}</Text>
           </BlurView>
         </View>
 
-        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.telemetryCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}> 
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.telemetryCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}>
           <Text style={[styles.telemetryTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en Tiempo Real</Text>
 
           <View style={styles.xyzRow}>

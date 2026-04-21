@@ -3,12 +3,16 @@ import { BleManager, Device, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { TelemetryData } from '../store/crashStore';
 
+/**
+ * C.R.A.S.H. - Bluetooth Telemetry Service
+ */
+
 export interface ScanDevice {
   id: string;
   name: string;
 }
 
-const DEFAULT_MODULE_NAMES = ['HM-10', 'HM10', 'HC-05', 'HC05'];
+const DEFAULT_MODULE_NAMES = ['HM-10', 'HM10', 'HC-05', 'HC05', 'CRASH'];
 const DEFAULT_SERVICE_UUIDS = ['FFE0', '180F'];
 const DEFAULT_CHARACTERISTIC_UUIDS = ['FFE1', '2A19'];
 
@@ -19,7 +23,7 @@ try {
   manager = new BleManager();
   bleAvailable = true;
 } catch (error) {
-  console.error('Bluetooth LE no está disponible:', error);
+  console.error('Bluetooth LE no disponible:', error);
   bleAvailable = false;
 }
 
@@ -29,7 +33,6 @@ const normalizeName = (value: string) => value.trim().toUpperCase().replace(/\s+
 
 const decodeBase64 = (value: string) => {
   if (!value) return '';
-  if (typeof globalThis.atob === 'function') return globalThis.atob(value);
   try {
     return Buffer.from(value, 'base64').toString('utf8');
   } catch {
@@ -91,9 +94,11 @@ const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => 
   let pending = '';
   return (chunk: string) => {
     if (!chunk) return;
-    pending = `${pending}${chunk}`.replace(/\r/g, '');
+    // Eliminamos caracteres nulos que el HC-05 suele enviar por ruido
+    pending = `${pending}${chunk}`.replace(/\0/g, '').replace(/\r/g, ''); 
     const lines = pending.split('\n');
     pending = lines.pop() ?? '';
+    
     for (const line of lines) {
       const telemetry = parseTelemetry(line);
       if (telemetry) onTelemetry(telemetry);
@@ -104,46 +109,42 @@ const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => 
 class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private connectedDevice: Device | null = null;
+  private animationFrameId: number | null = null;
+  private pendingTelemetry: TelemetryData | null = null;
+  private isUserDisconnecting = false;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
-
     const version = parseInt(String(Platform.Version), 10);
     if (version >= 31) {
       await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
       ]);
-      return;
+    } else {
+      await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
     }
-
-    await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
   }
 
   async findHardwareCandidates(preferredNames: string[] = []): Promise<ScanDevice[]> {
     if (!bleAvailable || !manager) return [];
-
     await this.requestPermissions();
 
     return new Promise((resolve) => {
       const matches = new Map<string, ScanDevice>();
-
       manager?.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
         if (error) {
           manager?.stopDeviceScan();
           resolve([]);
           return;
         }
-
         if (!device) return;
         const normalized = normalizeDevice(device);
-        if (!normalized) return;
-
-        if (bluetoothDeviceNameMatcher(normalized.name, preferredNames)) {
+        if (normalized && bluetoothDeviceNameMatcher(normalized.name, preferredNames)) {
           matches.set(normalized.id, normalized);
         }
       });
-
       setTimeout(() => {
         manager?.stopDeviceScan();
         resolve([...matches.values()]);
@@ -151,67 +152,94 @@ class BluetoothTelemetryService {
     });
   }
 
+  private async establishConnection(
+    deviceId: string, 
+    onTelemetry: (telemetry: TelemetryData) => void
+  ) {
+    if (!manager || this.isUserDisconnecting) return;
+
+    try {
+      this.connectedDevice = await manager.connectToDevice(deviceId, { timeout: 10000 });
+      if (Platform.OS === 'android') await this.connectedDevice.requestMTU(512);
+
+      await this.connectedDevice.discoverAllServicesAndCharacteristics();
+
+      // Reconexión automática más robusta
+      this.connectedDevice.onDisconnected(() => {
+        if (!this.isUserDisconnecting) {
+          console.warn('Reconectando...');
+          // Delay para evitar bucles infinitos inmediatos
+          setTimeout(() => this.establishConnection(deviceId, onTelemetry), 2000);
+        }
+      });
+
+      const services = await this.connectedDevice.services();
+      const service = services.find((s) => 
+        DEFAULT_SERVICE_UUIDS.includes(s.uuid.slice(4, 8).toUpperCase())
+      );
+      
+      if (!service) throw new Error('Servicio no compatible');
+
+      const characteristics = await service.characteristics();
+      const characteristic = characteristics.find((c) =>
+        DEFAULT_CHARACTERISTIC_UUIDS.includes(c.uuid.slice(4, 8).toUpperCase())
+      );
+
+      if (!characteristic) throw new Error('Característica no compatible');
+
+      // Función de envío optimizada para la UI
+      const optimizedOnTelemetry = (data: TelemetryData) => {
+        this.pendingTelemetry = data;
+        if (!this.animationFrameId) {
+          this.animationFrameId = requestAnimationFrame(() => {
+            if (this.pendingTelemetry) onTelemetry(this.pendingTelemetry);
+            this.animationFrameId = null;
+          });
+        }
+      };
+
+      const streamParser = createTelemetryStreamParser(optimizedOnTelemetry);
+
+      this.monitorSubscription = characteristic.monitor((error, updated) => {
+        if (error) return;
+        if (updated?.value) streamParser(decodeBase64(updated.value));
+      });
+
+    } catch (error) {
+      if (!this.isUserDisconnecting) {
+        setTimeout(() => this.establishConnection(deviceId, onTelemetry), 3000);
+      }
+    }
+  }
+
   async startPassiveTelemetryListener(
     preferredNames: string[],
     onDeviceDetected: (device: ScanDevice | null) => void,
     onTelemetry: (telemetry: TelemetryData) => void
   ) {
-    this.stopPassiveTelemetryListener();
-
-    if (!bleAvailable || !manager) {
-      onDeviceDetected(null);
-      return;
-    }
+    this.isUserDisconnecting = false;
+    if (this.connectedDevice) return; // Evitar múltiples conexiones
 
     await this.requestPermissions();
     const candidates = await this.findHardwareCandidates(preferredNames);
     const matchedDevice = candidates[0] ?? null;
     onDeviceDetected(matchedDevice);
 
-    if (!matchedDevice) return;
-
-    try {
-      this.connectedDevice = await manager.connectToDevice(matchedDevice.id, { timeout: 10000 });
-      await this.connectedDevice.discoverAllServicesAndCharacteristics();
-      const streamParser = createTelemetryStreamParser(onTelemetry);
-
-      const services = await this.connectedDevice.services();
-      const service = services.find((s) => DEFAULT_SERVICE_UUIDS.includes(s.uuid.slice(-4).toUpperCase()));
-      if (!service) return;
-
-      const characteristics = await service.characteristics();
-      const characteristic = characteristics.find((c) =>
-        DEFAULT_CHARACTERISTIC_UUIDS.includes(c.uuid.slice(-4).toUpperCase())
-      );
-
-      if (!characteristic) return;
-
-      this.monitorSubscription = this.connectedDevice.monitorCharacteristicForService(
-        service.uuid,
-        characteristic.uuid,
-        (error, updated) => {
-          if (error || !updated?.value) return;
-          const rawPayload = decodeBase64(updated.value);
-          streamParser(rawPayload);
-        }
-      );
-    } catch (error) {
-      console.error('BLE listener error:', error);
-      onDeviceDetected(null);
+    if (matchedDevice) {
+      await this.establishConnection(matchedDevice.id, onTelemetry);
     }
   }
 
   stopPassiveTelemetryListener() {
+    this.isUserDisconnecting = true;
     if (this.monitorSubscription) {
       this.monitorSubscription.remove();
       this.monitorSubscription = null;
     }
-
     if (this.connectedDevice) {
       this.connectedDevice.cancelConnection().catch(() => undefined);
+      this.connectedDevice = null;
     }
-
-    this.connectedDevice = null;
     manager?.stopDeviceScan();
   }
 }
