@@ -55,6 +55,7 @@ export interface AuthUser {
   phone_number?: string;
   full_name?: string;
   auth_provider: 'password' | 'google' | 'apple';
+  role?: 'user' | 'developer';
 }
 
 export interface TelemetryData {

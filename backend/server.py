@@ -65,6 +65,7 @@ class User(BaseModel):
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     auth_provider: str = "password"
+    role: str = "user"  # user | developer
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -74,6 +75,7 @@ class UserPublic(BaseModel):
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     auth_provider: str
+    role: str = "user"
 
 
 class RegisterRequest(BaseModel):
@@ -239,6 +241,10 @@ class WhatsAppTestMessageRequest(BaseModel):
     body: str = Field(min_length=1, max_length=1024)
 
 
+class DeveloperTemplateTestRequest(BaseModel):
+    contact_id: Optional[str] = None
+
+
 # ==================== HELPERS ====================
 
 
@@ -300,6 +306,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return User(**sanitize_doc(user_doc))
+
+
+def require_developer(user: User) -> None:
+    if user.role != "developer":
+        raise HTTPException(status_code=403, detail="Developer role required")
 
 
 
@@ -706,7 +717,17 @@ def to_public_user(user: User) -> UserPublic:
         full_name=user.full_name,
         phone_number=user.phone_number,
         auth_provider=user.auth_provider,
+        role=user.role,
     )
+
+
+def get_developer_credentials() -> Dict[str, Optional[str]]:
+    return {
+        "email": os.getenv("DEV_ACCOUNT_EMAIL"),
+        "password": os.getenv("DEV_ACCOUNT_PASSWORD"),
+        "full_name": os.getenv("DEV_ACCOUNT_FULL_NAME", "Developer QA"),
+        "phone_number": os.getenv("DEV_ACCOUNT_PHONE", "+10000000000"),
+    }
 
 
 # ==================== LIFECYCLE ====================
@@ -755,6 +776,7 @@ async def register(payload: RegisterRequest) -> AuthResponse:
         full_name=payload.full_name,
         phone_number=normalized_phone,
         auth_provider="password",
+        role="user",
         password_hash=hash_password(payload.password),
     )
     await db.users.insert_one(user.model_dump())
@@ -768,6 +790,42 @@ async def register(payload: RegisterRequest) -> AuthResponse:
 
 @api_router.post("/auth/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
+    developer_creds = get_developer_credentials()
+    requested_email = payload.email.lower()
+    if (
+        developer_creds["email"]
+        and developer_creds["password"]
+        and requested_email == developer_creds["email"].lower()
+        and payload.password == developer_creds["password"]
+    ):
+        existing = await db.users.find_one({"email": requested_email})
+        if existing:
+            await db.users.update_one(
+                {"id": existing["id"]},
+                {
+                    "$set": {
+                        "role": "developer",
+                        "auth_provider": "password",
+                        "full_name": developer_creds["full_name"],
+                        "phone_number": normalize_phone_number(developer_creds["phone_number"] or "+10000000000"),
+                    }
+                },
+            )
+            refreshed = await db.users.find_one({"id": existing["id"]})
+            user = User(**sanitize_doc(refreshed))
+        else:
+            user = User(
+                email=requested_email,
+                password_hash=hash_password(payload.password),
+                full_name=developer_creds["full_name"],
+                phone_number=normalize_phone_number(developer_creds["phone_number"] or "+10000000000"),
+                auth_provider="password",
+                role="developer",
+            )
+            await db.users.insert_one(user.model_dump())
+        token = create_access_token(user.id)
+        return AuthResponse(access_token=token, user=to_public_user(user))
+
     user_doc = await db.users.find_one({"email": payload.email.lower()})
     if not user_doc:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -790,6 +848,7 @@ async def oauth_login(payload: OAuthLoginRequest) -> AuthResponse:
             email=payload.email.lower(),
             full_name=payload.full_name,
             auth_provider=payload.provider,
+            role="user",
             password_hash=None,
         )
         await db.users.insert_one(user.model_dump())
@@ -919,6 +978,26 @@ async def send_whatsapp_test_message(
     _ = current_user
     message_id = await send_whatsapp_cloud_message(payload.to, payload.body)
     return {"status": "sent", "message_id": message_id}
+
+
+@api_router.post("/integrations/whatsapp/test-template")
+async def send_whatsapp_template_to_emergency_contact(
+    payload: DeveloperTemplateTestRequest,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    require_developer(current_user)
+
+    query: Dict[str, Any] = {"owner_id": current_user.id}
+    if payload.contact_id:
+        query["id"] = payload.contact_id
+
+    contact_doc = await db.emergency_contacts.find_one(query)
+    if not contact_doc:
+        raise HTTPException(status_code=404, detail="No emergency contact found for template test")
+
+    contact = EmergencyContact(**sanitize_doc(contact_doc))
+    message_id = await send_whatsapp_template_message(contact.phone)
+    return {"status": "sent", "message_id": message_id, "contact_phone": contact.phone}
 
 
 @api_router.get("/integrations/whatsapp/debug")

@@ -32,6 +32,8 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     contacts,
     profile,
     setEmergencyActive,
+    setCurrentImpact,
+    addImpact,
     user,
   } = useCrashStore();
   
@@ -114,16 +116,39 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
   }, [impact, profile?.allergies, profile?.blood_type, profile?.medical_conditions, settings.language, user]);
   
   const sendEmergencyAlert = useCallback(async () => {
+    if (!impact) return;
     setAlertSent(true);
     Vibration.cancel();
     pulseAnim.stopAnimation();
-    
-    // Get AI diagnosis
+
+    let persistedImpact = impact;
+    if (impact.id.startsWith('pending-') && user) {
+      try {
+        const response = await impactsApi.create({
+          g_force: impact.g_force,
+          acceleration_x: impact.acceleration_x,
+          acceleration_y: impact.acceleration_y,
+          acceleration_z: impact.acceleration_z,
+          gyro_x: impact.gyro_x,
+          gyro_y: impact.gyro_y,
+          gyro_z: impact.gyro_z,
+          latitude: impact.latitude,
+          longitude: impact.longitude,
+        });
+        persistedImpact = response.data;
+        setCurrentImpact(response.data);
+        addImpact(response.data);
+      } catch (error) {
+        console.error('Error creating impact after countdown:', error);
+      }
+    }
+
+    // Get AI diagnosis for final event
     fetchDiagnosis();
-    
+
     // Message dispatch is backend-driven. Here we only reflect UI status.
-    if (contacts.length > 0 && impact) {
-      setWhatsAppSent((impact.alerts_dispatched ?? 0) > 0);
+    if (contacts.length > 0) {
+      setWhatsAppSent((persistedImpact.alerts_dispatched ?? 0) > 0);
     }
     
     // Auto call primary contact after 3 seconds
@@ -137,7 +162,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
         }, 3000);
       }
     }
-  }, [contacts, fetchDiagnosis, impact, pulseAnim, settings.auto_call_enabled]);
+  }, [addImpact, contacts, fetchDiagnosis, impact, pulseAnim, setCurrentImpact, settings.auto_call_enabled, user]);
 
   const startCountdown = useCallback(() => {
     // Clear any existing interval first
@@ -198,7 +223,7 @@ export const EmergencyModal: React.FC<EmergencyModalProps> = ({ visible, onClose
     pulseAnim.stopAnimation();
     setEmergencyActive(false);
     
-    if (impact && user) {
+    if (impact && user && !impact.id.startsWith('pending-')) {
       try {
         await impactsApi.markFalseAlarm(impact.id);
       } catch (error) {
