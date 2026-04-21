@@ -1,4 +1,6 @@
 import { PermissionsAndroid, Platform } from 'react-native';
+import { BleManager, Device, Subscription } from 'react-native-ble-plx';
+import { Buffer } from 'buffer';
 import { TelemetryData } from '../store/crashStore';
 
 export interface ScanDevice {
@@ -6,23 +8,34 @@ export interface ScanDevice {
   name: string;
 }
 
-const DEFAULT_MODULE_NAMES = ['HC-05', 'HC05', 'HC-10', 'HC10'];
+const DEFAULT_MODULE_NAMES = ['HM-10', 'HM10', 'HC-05', 'HC05'];
+const DEFAULT_SERVICE_UUIDS = ['FFE0', '180F'];
+const DEFAULT_CHARACTERISTIC_UUIDS = ['FFE1', '2A19'];
 
-let bluetoothClassicAvailable = false;
-let BluetoothClassic: any;
+let bleAvailable = false;
+let manager: BleManager | null = null;
 
 try {
-  const module = require('react-native-bluetooth-classic');
-  BluetoothClassic = module?.default ?? module;
-  bluetoothClassicAvailable = true;
+  manager = new BleManager();
+  bleAvailable = true;
 } catch (error) {
-  console.error('Bluetooth Classic no está disponible:', error);
-  bluetoothClassicAvailable = false;
+  console.error('Bluetooth LE no está disponible:', error);
+  bleAvailable = false;
 }
 
-export const isBluetoothClassicAvailable = () => bluetoothClassicAvailable;
+export const isBluetoothLeAvailable = () => bleAvailable;
 
 const normalizeName = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+
+const decodeBase64 = (value: string) => {
+  if (!value) return '';
+  if (typeof globalThis.atob === 'function') return globalThis.atob(value);
+  try {
+    return Buffer.from(value, 'base64').toString('utf8');
+  } catch {
+    return '';
+  }
+};
 
 export const bluetoothDeviceNameMatcher = (deviceName?: string, preferredNames: string[] = []) => {
   if (!deviceName) return false;
@@ -36,46 +49,51 @@ export const bluetoothDeviceNameMatcher = (deviceName?: string, preferredNames: 
   );
 };
 
-const normalizeDevice = (device: any): ScanDevice | null => {
+const normalizeDevice = (device: Device): ScanDevice | null => {
   if (!device?.id) return null;
   return {
     id: String(device.id),
-    name: String(device.name || '').trim() || `BT-${String(device.id).slice(-4)}`,
+    name: String(device.name || device.localName || '').trim() || `BLE-${String(device.id).slice(-4)}`,
   };
 };
 
 const parseTelemetry = (payload: string): TelemetryData | null => {
-  const cleanedPayload = payload.trim();
-  if (!cleanedPayload) return null;
+  const cleaned = payload.trim();
+  if (!cleaned) return null;
 
+  // Intento 1: ¿Es JSON? ({"g": 1.05, ...})
   try {
-    const parsed = JSON.parse(cleanedPayload);
+    const parsed = JSON.parse(cleaned);
     return {
-      acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
-      acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
-      acceleration_z: Number(parsed.acceleration_z ?? parsed.az ?? 0),
-      gyro_x: Number(parsed.gyro_x ?? parsed.gx ?? 0),
-      gyro_y: Number(parsed.gyro_y ?? parsed.gy ?? 0),
-      gyro_z: Number(parsed.gyro_z ?? parsed.gz ?? 0),
-      g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
+      acceleration_x: Number(parsed.ax || parsed.acceleration_x || 0),
+      acceleration_y: Number(parsed.ay || parsed.acceleration_y || 0),
+      acceleration_z: Number(parsed.az || parsed.acceleration_z || 0),
+      gyro_x: Number(parsed.gx || parsed.gyro_x || 0),
+      gyro_y: Number(parsed.gy || parsed.gyro_y || 0),
+      gyro_z: Number(parsed.gz || parsed.gyro_z || 0),
+      g_force: Number(parsed.g || parsed.g_force || 1.0),
     };
   } catch {
-    const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
-    if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) return null;
-    return {
-      acceleration_x: parts[0],
-      acceleration_y: parts[1],
-      acceleration_z: parts[2],
-      gyro_x: parts[3],
-      gyro_y: parts[4],
-      gyro_z: parts[5],
-      g_force: parts[6],
-    };
+    // Intento 2: ¿Es CSV? (ax,ay,az,gx,gy,gz,g)
+    const parts = cleaned.split(',').map(v => Number(v.trim()));
+    if (parts.length >= 7) {
+      return {
+        acceleration_x: parts[0],
+        acceleration_y: parts[1],
+        acceleration_z: parts[2],
+        gyro_x: parts[3],
+        gyro_y: parts[4],
+        gyro_z: parts[5],
+        g_force: parts[6]
+      };
+    }
   }
+  return null;
 };
 
 class BluetoothTelemetryService {
-  private removeDataListener: (() => void) | null = null;
+  private monitorSubscription: Subscription | null = null;
+  private connectedDevice: Device | null = null;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
@@ -93,17 +111,34 @@ class BluetoothTelemetryService {
   }
 
   async findHardwareCandidates(preferredNames: string[] = []): Promise<ScanDevice[]> {
-    if (!bluetoothClassicAvailable) return [];
+    if (!bleAvailable || !manager) return [];
 
     await this.requestPermissions();
-    const bonded = await BluetoothClassic.getBondedDevices();
 
-    return bonded
-      .map((device: any) => normalizeDevice(device))
-      .filter((device: ScanDevice | null): device is ScanDevice => {
-        if (!device) return false;
-        return bluetoothDeviceNameMatcher(device.name, preferredNames);
+    return new Promise((resolve) => {
+      const matches = new Map<string, ScanDevice>();
+
+      manager?.startDeviceScan(null, { allowDuplicates: false }, (error, device) => {
+        if (error) {
+          manager?.stopDeviceScan();
+          resolve([]);
+          return;
+        }
+
+        if (!device) return;
+        const normalized = normalizeDevice(device);
+        if (!normalized) return;
+
+        if (bluetoothDeviceNameMatcher(normalized.name, preferredNames)) {
+          matches.set(normalized.id, normalized);
+        }
       });
+
+      setTimeout(() => {
+        manager?.stopDeviceScan();
+        resolve([...matches.values()]);
+      }, 3500);
+    });
   }
 
   async startPassiveTelemetryListener(
@@ -113,7 +148,7 @@ class BluetoothTelemetryService {
   ) {
     this.stopPassiveTelemetryListener();
 
-    if (!bluetoothClassicAvailable) {
+    if (!bleAvailable || !manager) {
       onDeviceDetected(null);
       return;
     }
@@ -123,17 +158,62 @@ class BluetoothTelemetryService {
     const matchedDevice = candidates[0] ?? null;
     onDeviceDetected(matchedDevice);
 
-    this.removeDataListener = BluetoothClassic.onDataReceived((event: any) => {
-      const telemetry = parseTelemetry(event?.data || '');
-      if (telemetry) onTelemetry(telemetry);
-    });
+    if (!matchedDevice) return;
+
+    try {
+      this.connectedDevice = await manager.connectToDevice(matchedDevice.id, { timeout: 10000 });
+      await this.connectedDevice.discoverAllServicesAndCharacteristics();
+
+      const services = await this.connectedDevice.services();
+      const service = services.find((s) => DEFAULT_SERVICE_UUIDS.includes(s.uuid.slice(-4).toUpperCase()));
+      if (!service) return;
+
+      const characteristics = await service.characteristics();
+      const characteristic = characteristics.find((c) =>
+        DEFAULT_CHARACTERISTIC_UUIDS.includes(c.uuid.slice(-4).toUpperCase())
+      );
+
+      if (!characteristic) return;
+
+      this.monitorSubscription = this.connectedDevice.monitorCharacteristicForService(
+        service.uuid,
+        characteristic.uuid,
+        (err, char) => {
+    if (err) {
+      console.log("❌ Error en monitor BLE:", err.message);
+      return;
+    }
+    if (char?.value) {
+      const rawString = decodeBase64(char.value);
+      console.log("📥 Raw Data recibida:", rawString); // ESTO ES CLAVE
+
+      const data = parseTelemetry(rawString);
+      if (data) {
+        onTelemetry(data);
+      } else {
+        console.log("⚠️ Falló el parseo de:", rawString);
+      }
+    }
+  }
+);
+    } catch (error) {
+      console.error('BLE listener error:', error);
+      onDeviceDetected(null);
+    }
   }
 
   stopPassiveTelemetryListener() {
-    if (this.removeDataListener) {
-      this.removeDataListener();
-      this.removeDataListener = null;
+    if (this.monitorSubscription) {
+      this.monitorSubscription.remove();
+      this.monitorSubscription = null;
     }
+
+    if (this.connectedDevice) {
+      this.connectedDevice.cancelConnection().catch(() => undefined);
+    }
+
+    this.connectedDevice = null;
+    manager?.stopDeviceScan();
   }
 }
 

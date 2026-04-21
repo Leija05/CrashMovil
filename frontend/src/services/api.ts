@@ -106,7 +106,7 @@ export const settingsApi = {
     countdown_seconds: number;
     auto_call_enabled: boolean;
     sms_enabled: boolean;
-    message_type: 'sms' | 'whatsapp';
+    message_type: 'whatsapp';
     language: string;
     theme: string;
   }>) => api.put('/settings', data),

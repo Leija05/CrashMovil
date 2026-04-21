@@ -50,6 +50,10 @@ WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H
     "true",
     "yes",
 }
+WHATSAPP_OTP_TEMPLATE_NAME = os.getenv("WHATSAPP_OTP_TEMPLATE_NAME", "").strip()
+WHATSAPP_OTP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_OTP_TEMPLATE_LANGUAGE", "es_MX").strip()
+WHATSAPP_COLLISION_TEMPLATE_NAME = os.getenv("WHATSAPP_COLLISION_TEMPLATE_NAME", "").strip()
+WHATSAPP_COLLISION_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_COLLISION_TEMPLATE_LANGUAGE", "es_MX").strip()
 FALLBACK_REENGAGEMENT_IDS: set[str] = set()
 MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
 
@@ -164,8 +168,8 @@ class DeviceSettings(BaseModel):
     impact_threshold: float = 5.0
     countdown_seconds: int = 30
     auto_call_enabled: bool = True
-    sms_enabled: bool = True
-    message_type: str = "sms"  # sms | whatsapp
+    sms_enabled: bool = False
+    message_type: str = "whatsapp"  # whatsapp only
     language: str = "es"
     theme: str = "dark"
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -283,12 +287,26 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     return User(**sanitize_doc(user_doc))
 
 
+
+
+
+def normalize_settings_channel(settings: DeviceSettings) -> DeviceSettings:
+    if settings.message_type != "whatsapp" or settings.sms_enabled:
+        settings.message_type = "whatsapp"
+        settings.sms_enabled = False
+    return settings
+
 async def get_or_create_settings(owner_id: str) -> DeviceSettings:
     settings_doc = await db.device_settings.find_one({"owner_id": owner_id})
     if settings_doc:
-        return DeviceSettings(**sanitize_doc(settings_doc))
+        settings = normalize_settings_channel(DeviceSettings(**sanitize_doc(settings_doc)))
+        await db.device_settings.update_one(
+            {"owner_id": owner_id},
+            {"$set": {"message_type": settings.message_type, "sms_enabled": settings.sms_enabled}}
+        )
+        return settings
 
-    settings = DeviceSettings(owner_id=owner_id)
+    settings = normalize_settings_channel(DeviceSettings(owner_id=owner_id))
     await db.device_settings.insert_one(settings.model_dump())
     return settings
 
@@ -401,13 +419,18 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
     return message_id or "sent"
 
 
-async def send_whatsapp_template_message(to_phone: str) -> str:
+async def send_whatsapp_template_message(
+    to_phone: str,
+    template_name: str,
+    language_code: str,
+    body_params: Optional[List[str]] = None,
+) -> str:
     if not is_whatsapp_ready():
         raise ValueError(
             "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
         )
-    if not WHATSAPP_TEMPLATE_NAME:
-        raise ValueError("WHATSAPP_TEMPLATE_NAME no está configurado para fallback de 24h.")
+    if not template_name:
+        raise ValueError("Template de WhatsApp no configurado.")
 
     normalized_phone = normalize_phone_number(to_phone)
     endpoint = (
@@ -418,20 +441,28 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
-    payload = {
+    payload: Dict[str, Any] = {
         "messaging_product": "whatsapp",
         "to": normalized_phone,
         "type": "template",
         "template": {
-            "name": WHATSAPP_TEMPLATE_NAME,
-            "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+            "name": template_name,
+            "language": {"code": language_code},
         },
     }
+
+    if body_params:
+        payload["template"]["components"] = [
+            {
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(value)[:1024]} for value in body_params],
+            }
+        ]
     logging.info(
-        "WhatsApp 24h fallback template send to=%s template=%s lang=%s",
+        "WhatsApp template send to=%s template=%s lang=%s",
         normalized_phone,
-        WHATSAPP_TEMPLATE_NAME,
-        WHATSAPP_TEMPLATE_LANGUAGE,
+        template_name,
+        language_code,
     )
     async with httpx.AsyncClient(timeout=20.0) as client_http:
         response = await client_http.post(endpoint, headers=headers, json=payload)
@@ -449,7 +480,12 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
     return message_id or "sent"
 
 
-async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
+async def send_contact_alert(
+    contact: EmergencyContact,
+    message: str,
+    channel: str,
+    collision_template_params: Optional[List[str]] = None,
+) -> AlertDispatchResult:
     provider = integration_provider()
     logging.info(
         "Dispatching %s alert through %s to %s (%s)",
@@ -473,6 +509,18 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
                 status="failed:whatsapp_not_configured",
             )
         try:
+            if WHATSAPP_COLLISION_TEMPLATE_NAME and collision_template_params:
+                message_id = await send_whatsapp_template_message(
+                    contact.phone,
+                    WHATSAPP_COLLISION_TEMPLATE_NAME,
+                    WHATSAPP_COLLISION_TEMPLATE_LANGUAGE,
+                    collision_template_params,
+                )
+                return AlertDispatchResult(
+                    contact_id=contact.id,
+                    channel=channel,
+                    status=f"sent_template:{message_id}",
+                )
             message_id = await send_whatsapp_cloud_message(contact.phone, message)
             return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
         except HTTPException as exc:
@@ -518,8 +566,19 @@ async def dispatch_emergency_alerts(
         return []
 
     message = format_alert_message(impact, diagnosis)
+    location_link = (
+        f"https://maps.google.com/?q={impact.latitude},{impact.longitude}"
+        if impact.latitude is not None and impact.longitude is not None
+        else "Ubicación no disponible"
+    )
+    collision_template_params = [
+        impact.severity.upper(),
+        diagnosis.severity_assessment,
+        diagnosis.recommendation,
+        location_link,
+    ]
     results: List[AlertDispatchResult] = []
-    message_channel_enabled = settings.sms_enabled or settings.message_type == "whatsapp"
+    message_channel_enabled = settings.message_type == "whatsapp"
 
     logging.info(
         "Dispatch config owner_id=%s -> message_type=%s, message_channel_enabled=%s, auto_call_enabled=%s, verified_contacts=%s",
@@ -533,7 +592,14 @@ async def dispatch_emergency_alerts(
     for doc in verified_contacts:
         contact = EmergencyContact(**sanitize_doc(doc))
         if message_channel_enabled:
-            results.append(await send_contact_alert(contact, message, settings.message_type))
+            results.append(
+                await send_contact_alert(
+                    contact,
+                    message,
+                    settings.message_type,
+                    collision_template_params=collision_template_params,
+                )
+            )
         if settings.auto_call_enabled:
             results.append(await place_automated_call(contact, message))
 
@@ -729,8 +795,16 @@ async def create_contact(
     await db.emergency_contacts.insert_one(contact_obj.model_dump())
     logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
     try:
-        verification_message = f"Hola, Aquí esta el TOKEN de VERIFICACION para CRASH: {token}"
-        await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
+        if WHATSAPP_OTP_TEMPLATE_NAME:
+            await send_whatsapp_template_message(
+                contact_obj.phone,
+                WHATSAPP_OTP_TEMPLATE_NAME,
+                WHATSAPP_OTP_TEMPLATE_LANGUAGE,
+                [token],
+            )
+        else:
+            verification_message = f"Hola, aquí está tu TOKEN de VERIFICACIÓN para C.R.A.S.H: {token}"
+            await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
         logging.info("Verification token sent to contact %s (%s)", contact_obj.name, contact_obj.phone)
     except Exception as exc:  # noqa: BLE001
         logging.warning(
@@ -849,6 +923,10 @@ async def whatsapp_debug_info(current_user: User = Depends(get_current_user)) ->
         "whatsapp_template_name": WHATSAPP_TEMPLATE_NAME or None,
         "whatsapp_template_language": WHATSAPP_TEMPLATE_LANGUAGE,
         "whatsapp_template_fallback_on_24h": WHATSAPP_TEMPLATE_FALLBACK_ON_24H,
+        "whatsapp_otp_template_name": WHATSAPP_OTP_TEMPLATE_NAME or None,
+        "whatsapp_otp_template_language": WHATSAPP_OTP_TEMPLATE_LANGUAGE,
+        "whatsapp_collision_template_name": WHATSAPP_COLLISION_TEMPLATE_NAME or None,
+        "whatsapp_collision_template_language": WHATSAPP_COLLISION_TEMPLATE_LANGUAGE,
         "message_type": settings.message_type,
         "sms_enabled": settings.sms_enabled,
         "impact_threshold": settings.impact_threshold,
@@ -931,7 +1009,11 @@ async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
                     ):
                         FALLBACK_REENGAGEMENT_IDS.add(status_id)
                         try:
-                            fallback_message_id = await send_whatsapp_template_message(original_phone)
+                            fallback_message_id = await send_whatsapp_template_message(
+                                original_phone,
+                                WHATSAPP_TEMPLATE_NAME,
+                                WHATSAPP_TEMPLATE_LANGUAGE,
+                            )
                             logging.info(
                                 "Re-engagement fallback template sent to %s with message_id=%s",
                                 original_phone,
@@ -977,6 +1059,8 @@ async def update_settings(
     current_user: User = Depends(get_current_user),
 ) -> DeviceSettings:
     update_data = {k: v for k, v in settings.model_dump().items() if v is not None}
+    update_data["message_type"] = "whatsapp"
+    update_data["sms_enabled"] = False
     update_data["updated_at"] = datetime.now(timezone.utc)
 
     await get_or_create_settings(current_user.id)
