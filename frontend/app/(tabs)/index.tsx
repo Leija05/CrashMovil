@@ -28,7 +28,8 @@ import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { useCrashStore } from '../../src/store/crashStore';
 
 const IMPACT_COOLDOWN_MS = 12000;
-const SENSOR_TIMEOUT_MS = 3500;
+const SENSOR_TIMEOUT_MS = 7000;
+const HIGH_FORCE_ALERT_COOLDOWN_MS = 8000;
 
 const notify = (message: string) => {
   if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
@@ -70,6 +71,7 @@ export default function HomeScreen() {
 
   const lastTelemetryAt = useRef(Date.now());
   const lastImpactAt = useRef(0);
+  const lastHighForceAlertAt = useRef(0);
   const heroAnim = useRef(new Animated.Value(0)).current;
 
   // NUEVO: Refs para evitar cierres (closures) obsoletos en el listener de alta frecuencia
@@ -112,11 +114,19 @@ export default function HomeScreen() {
     await bluetoothTelemetryService.startPassiveTelemetryListener(
       [settingsRef.current.device_name, 'HC-05', 'HM-10'],
       (device) => {
-        setConnected(Boolean(device));
+        const connected = Boolean(device);
+        setConnected(connected);
         setConnectedDeviceName(device?.name ?? null);
-        if (!device) {
+        if (!connected) {
           setSensorOffline(true);
           notify(settingsRef.current.language === 'es' ? 'Sensor desconectado' : 'Sensor disconnected');
+        } else {
+          setSensorOffline(false);
+          notify(
+            settingsRef.current.language === 'es'
+              ? `Módulo conectado: ${device?.name ?? 'Bluetooth'}`
+              : `Module connected: ${device?.name ?? 'Bluetooth'}`,
+          );
         }
       },
       (incomingTelemetry) => {
@@ -165,12 +175,12 @@ export default function HomeScreen() {
     const timer = setInterval(() => {
       const now = Date.now();
       // Aumentamos el margen a 5000ms para compensar la latencia del HC-05
-      const timedOut = now - lastTelemetryAt.current > 5000;
+      const timedOut = now - lastTelemetryAt.current > SENSOR_TIMEOUT_MS;
 
       if (timedOut && !sensorOffline) {
         setSensorOffline(true);
-        // Solo notificamos si realmente hay una conexión activa pero vacía
-        if (isConnected) {
+        // Solo notificamos si realmente hay una conexión activa pero sin datos
+        if (isConnected && connectedDeviceName) {
           notify(settingsRef.current.language === 'es' ? 'Buscando datos del sensor...' : 'Waiting for sensor data...');
         }
       }
@@ -187,14 +197,26 @@ export default function HomeScreen() {
 
     return () => {
       clearInterval(timer);
-      bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
-  }, [heroAnim, startBluetooth, isConnected]); // Se eliminó sensorOffline de aquí para evitar ciclos infinitos
+  }, [connectedDeviceName, heroAnim, isConnected, sensorOffline, setCurrentLocation, startBluetooth]); // Se eliminó sensorOffline de aquí para evitar ciclos infinitos
 
   useEffect(() => {
     triggerImpactFlow().catch(() => undefined);
     setImpactAlert(telemetry.g_force >= settings.impact_threshold);
   }, [settings.impact_threshold, telemetry.g_force, triggerImpactFlow]);
+
+  useEffect(() => {
+    const crossedHighForce = telemetry.g_force >= settings.impact_threshold;
+    if (!crossedHighForce) return;
+    const now = Date.now();
+    if (now - lastHighForceAlertAt.current < HIGH_FORCE_ALERT_COOLDOWN_MS) return;
+    lastHighForceAlertAt.current = now;
+    notify(
+      settings.language === 'es'
+        ? `⚠️ Fuerza alta detectada (${telemetry.g_force.toFixed(1)}G)`
+        : `⚠️ High force detected (${telemetry.g_force.toFixed(1)}G)`,
+    );
+  }, [settings.impact_threshold, settings.language, telemetry.g_force]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);

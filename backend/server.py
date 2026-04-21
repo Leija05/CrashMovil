@@ -20,6 +20,7 @@ from starlette.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
+load_dotenv(ROOT_DIR.parent / ".env")
 
 # ==================== APP + DB ====================
 
@@ -612,11 +613,15 @@ async def dispatch_emergency_alerts(
 
 async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
     try:
-        api_key = os.getenv("EMERGENT_LLM_KEY")
+        api_key = (
+            os.getenv("EMERGENT_LLM_KEY")
+            or os.getenv("GOOGLE_API_KEY")
+            or os.getenv("GEMINI_API_KEY")
+        )
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
 
-        client = genai.Client(api_key=api_key)
+        client = genai.Client(api_key=api_key.strip())
 
         severity = classify_severity(data.g_force)
         lang = "Spanish" if data.language == "es" else "English"
