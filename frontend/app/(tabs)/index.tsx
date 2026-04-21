@@ -16,23 +16,23 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { useTranslation } from 'react-i18next';
-import { impactsApi, contactsApi, settingsApi, statsApi } from '../../src/services/api';
+import { contactsApi, impactsApi, settingsApi, statsApi } from '../../src/services/api';
 import { bluetoothTelemetryService } from '../../src/services/bluetooth';
-import { TelemetryChart } from '../../src/components/TelemetryChart';
+import { CrashLogo } from '../../src/components/CrashLogo';
 import { EmergencyModal } from '../../src/components/EmergencyModal';
+import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { useCrashStore } from '../../src/store/crashStore';
 
 const IMPACT_COOLDOWN_MS = 12000;
 const SENSOR_TIMEOUT_MS = 3500;
 
 const notify = (message: string) => {
-  if (Platform.OS === 'android') {
-    ToastAndroid.show(message, ToastAndroid.SHORT);
-  } else {
-    Alert.alert('CRASH Safety', message);
-  }
+  if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
+  else Alert.alert('CRASH Safety', message);
 };
 
 export default function HomeScreen() {
@@ -48,6 +48,7 @@ export default function HomeScreen() {
     isEmergencyActive,
     currentImpact,
     impacts,
+    contacts,
     user,
     setTelemetry,
     setConnected,
@@ -72,8 +73,29 @@ export default function HomeScreen() {
   const heroAnim = useRef(new Animated.Value(0)).current;
 
   const glass = isDark
-    ? { borderColor: 'rgba(255,255,255,0.15)', bg: 'rgba(12,16,28,0.72)' }
-    : { borderColor: 'rgba(15,23,42,0.18)', bg: 'rgba(255,255,255,0.78)' };
+    ? { borderColor: '#1f3356', bg: 'rgba(10,24,51,0.86)' }
+    : { borderColor: 'rgba(15,23,42,0.16)', bg: 'rgba(255,255,255,0.82)' };
+
+  const loadData = useCallback(async () => {
+    if (!user) return;
+    const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
+      contactsApi.getAll(),
+      impactsApi.getAll(),
+      settingsApi.get(),
+      statsApi.get(),
+    ]);
+
+    setContacts(contactsRes.data);
+    setImpacts(impactsRes.data);
+    setSettings(settingsRes.data);
+    setStats(statsRes.data);
+  }, [setContacts, setImpacts, setSettings, user]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user) loadData().catch(() => undefined);
+    }, [loadData, user]),
+  );
 
   const startBluetooth = useCallback(async () => {
     await bluetoothTelemetryService.startPassiveTelemetryListener(
@@ -95,20 +117,6 @@ export default function HomeScreen() {
     );
   }, [setConnected, setConnectedDeviceName, setTelemetry, settings.device_name, settings.language]);
 
-  const loadData = useCallback(async () => {
-    if (!user) return;
-    const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
-      contactsApi.getAll(),
-      impactsApi.getAll(),
-      settingsApi.get(),
-      statsApi.get(),
-    ]);
-    setContacts(contactsRes.data);
-    setImpacts(impactsRes.data);
-    setSettings(settingsRes.data);
-    setStats(statsRes.data);
-  }, [setContacts, setImpacts, setSettings, user]);
-
   const triggerImpactFlow = useCallback(async () => {
     if (!isConnected || telemetry.g_force < settings.impact_threshold || !user) return;
     const now = Date.now();
@@ -117,7 +125,6 @@ export default function HomeScreen() {
 
     setImpactAlert(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
-    notify(settings.language === 'es' ? 'Impacto detectado: enviando protocolo' : 'Impact detected: dispatching protocol');
 
     const response = await impactsApi.create({
       g_force: telemetry.g_force,
@@ -134,16 +141,17 @@ export default function HomeScreen() {
     setCurrentImpact(response.data);
     setEmergencyActive(true);
     setImpacts([response.data, ...impacts]);
-  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, settings.impact_threshold, settings.language, telemetry, user]);
+  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, settings.impact_threshold, telemetry, user]);
 
   useEffect(() => {
-    Animated.timing(heroAnim, { toValue: 1, duration: 650, useNativeDriver: true }).start();
+    Animated.timing(heroAnim, { toValue: 1, duration: 550, useNativeDriver: true }).start();
     startBluetooth().catch(() => undefined);
+
     const timer = setInterval(() => {
       const timedOut = Date.now() - lastTelemetryAt.current > SENSOR_TIMEOUT_MS;
       if (timedOut && !sensorOffline) {
         setSensorOffline(true);
-        notify(settings.language === 'es' ? 'Sin telemetría en tiempo real' : 'Telemetry stream timeout');
+        notify(settings.language === 'es' ? 'Sin telemetría en tiempo real' : 'Telemetry timeout');
       }
     }, 1000);
 
@@ -156,16 +164,14 @@ export default function HomeScreen() {
       })
       .catch(() => undefined);
 
-    if (user) loadData().catch(() => undefined);
-
     return () => {
       clearInterval(timer);
       bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
-  }, [heroAnim, loadData, sensorOffline, setCurrentLocation, settings.language, startBluetooth, user]);
+  }, [heroAnim, sensorOffline, setCurrentLocation, settings.language, startBluetooth]);
 
   useEffect(() => {
-    triggerImpactFlow().catch((error) => console.error('Impact flow error', error));
+    triggerImpactFlow().catch(() => undefined);
     setImpactAlert(telemetry.g_force >= settings.impact_threshold);
   }, [settings.impact_threshold, telemetry.g_force, triggerImpactFlow]);
 
@@ -176,74 +182,100 @@ export default function HomeScreen() {
     setRefreshing(false);
   }, [loadData, startBluetooth, user]);
 
-  const tone = useMemo(() => {
-    if (sensorOffline) return '#f59e0b';
-    if (impactAlert) return '#ef4444';
-    return '#22c55e';
-  }, [impactAlert, sensorOffline]);
+  const statusTone = useMemo(() => {
+    if (impactAlert) return '#ff4b4b';
+    if (isConnected && !sensorOffline) return '#22c55e';
+    return '#ef4444';
+  }, [impactAlert, isConnected, sensorOffline]);
+
+  const batteryTone = batteryLevel > 60 ? '#22c55e' : batteryLevel > 30 ? '#f59e0b' : '#ef4444';
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#050505' : '#F3F5FA' }]}>
-      <LinearGradient colors={isDark ? ['#050505', '#06122A'] : ['#F7FAFF', '#DEE9FF']} style={StyleSheet.absoluteFill} />
+    <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#02071E' : '#EFF3FB' }]}>
+      <LinearGradient colors={isDark ? ['#02071E', '#020B2C', '#02071E'] : ['#F8FBFF', '#EAF2FF']} style={StyleSheet.absoluteFill} />
+
       <ScrollView
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#22d3ee" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#06b6d4" />}
         contentContainerStyle={styles.scroll}
       >
-        <Animated.View style={{ opacity: heroAnim, transform: [{ translateY: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [18, 0] }) }] }}>
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.hero, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
-            <Text style={[styles.title, { color: isDark ? '#fff' : '#031225' }]}>CRASH Safety · Ultra</Text>
-            <Text style={[styles.subtitle, { color: isDark ? '#94a3b8' : '#475569' }]}>
+        <Animated.View style={{ opacity: heroAnim, transform: [{ translateY: heroAnim.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }] }}>
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.heroCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
+            <View style={styles.heroHeader}>
+              <CrashLogo size={42} color="#ef4444" animated={true} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.brand, { color: isDark ? '#fff' : '#0f172a' }]}>C.R.A.S.H.</Text>
+                <Text style={[styles.heroSubtitle, { color: isDark ? '#94a3b8' : '#475569' }]}>Collision Response and Safety Hardware</Text>
+              </View>
+            </View>
+
+            <View style={[styles.statusPill, { borderColor: `${statusTone}77`, backgroundColor: `${statusTone}22` }]}>
+              <View style={[styles.dot, { backgroundColor: statusTone }]} />
+              <Text style={[styles.statusText, { color: statusTone }]}>{isConnected && !sensorOffline ? t('systemActive') : t('systemInactive')}</Text>
+              <Text style={styles.statusDivider}>|</Text>
+              <Ionicons name="logo-whatsapp" size={16} color="#22c55e" />
+              <Text style={styles.statusChannel}>WhatsApp</Text>
+            </View>
+
+            <Text style={[styles.linkedText, { color: isDark ? '#94a3b8' : '#334155' }]}>
               {t('linkedDevice')}: {connectedDeviceName ?? t('notConnected')}
             </Text>
-            <View style={[styles.statusPill, { backgroundColor: `${tone}22`, borderColor: `${tone}99` }]}>
-              <View style={[styles.dot, { backgroundColor: tone }]} />
-              <Text style={[styles.statusText, { color: tone }]}>
-                {sensorOffline ? 'Sensor timeout' : isConnected ? t('systemActive') : t('systemInactive')}
-              </Text>
-            </View>
           </BlurView>
         </Animated.View>
 
-        <View style={styles.bentoGrid}>
-          <TouchableOpacity activeOpacity={0.85} onPress={() => router.push('/contacts')}>
-            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
-              <Text style={[styles.cardLabel, { color: isDark ? '#cbd5e1' : '#334155' }]}>Contactos de emergencia</Text>
-              <Text style={[styles.cardValue, { color: isDark ? '#fff' : '#0f172a' }]}>{stats.total_impacts}</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <TouchableOpacity activeOpacity={0.85} onPress={() => router.push('/profile')}>
-            <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
-              <Text style={[styles.cardLabel, { color: isDark ? '#cbd5e1' : '#334155' }]}>Perfil médico</Text>
-              <Text style={[styles.cardValue, { color: isDark ? '#fff' : '#0f172a' }]}>{user ? 'Activo' : 'Pendiente'}</Text>
-            </BlurView>
-          </TouchableOpacity>
-
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.bentoCard, styles.fullCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}> 
-            <Text style={[styles.sectionTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en tiempo real</Text>
-            <View style={styles.telemetryRow}>
-              <View style={styles.metric}><Text style={styles.metricLabel}>GX</Text><Text style={styles.metricValue}>{telemetry.gyro_x.toFixed(0)}</Text></View>
-              <View style={styles.metric}><Text style={styles.metricLabel}>GY</Text><Text style={styles.metricValue}>{telemetry.gyro_y.toFixed(0)}</Text></View>
-              <View style={styles.metric}><Text style={styles.metricLabel}>GZ</Text><Text style={styles.metricValue}>{telemetry.gyro_z.toFixed(0)}</Text></View>
-              <View style={styles.metric}><Text style={styles.metricLabel}>|G|</Text><Text style={[styles.metricValue, { color: impactAlert ? '#ef4444' : '#22d3ee' }]}>{telemetry.g_force.toFixed(2)}</Text></View>
+        <View style={styles.statsRow}>
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+            <Text style={styles.statLabel}>Batería</Text>
+            <View style={styles.batteryHeader}>
+              <Ionicons name="battery-half" size={18} color={batteryTone} />
+              <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{batteryLevel}%</Text>
             </View>
-            {history.length > 5 && (
-              <TelemetryChart
-                data={history.map((value) => ({ value }))}
-                title="magnitudG"
-                color={impactAlert ? '#ef4444' : '#22d3ee'}
-                maxValue={Math.max(3, settings.impact_threshold + 3)}
-              />
-            )}
+            <View style={styles.batteryTrack}>
+              <View style={[styles.batteryFill, { width: `${Math.min(100, Math.max(0, batteryLevel))}%`, backgroundColor: batteryTone }]} />
+            </View>
+          </BlurView>
+
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+            <Text style={styles.statLabel}>Registros</Text>
+            <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{stats.real_impacts}</Text>
+            <Text style={styles.statHint}>Contactos: {contacts.length}</Text>
+          </BlurView>
+
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}> 
+            <Text style={styles.statLabel}>Ubicación</Text>
+            <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{currentLocation ? 'GPS' : '--'}</Text>
+            <Text style={styles.statHint}>{currentLocation ? 'Disponible' : 'Sin señal'}</Text>
           </BlurView>
         </View>
 
-        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.footerCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
-          <Text style={[styles.cardLabel, { color: isDark ? '#cbd5e1' : '#334155' }]}>
-            Batería {batteryLevel}% · GPS {currentLocation ? 'OK' : '--'}
-          </Text>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.telemetryCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}> 
+          <Text style={[styles.telemetryTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en Tiempo Real</Text>
+
+          <View style={styles.xyzRow}>
+            <View style={styles.xyzCard}><Text style={styles.xyzLabel}>X</Text><Text style={styles.xyzValue}>{telemetry.acceleration_x.toFixed(2)}</Text></View>
+            <View style={styles.xyzCard}><Text style={styles.xyzLabel}>Y</Text><Text style={styles.xyzValue}>{telemetry.acceleration_y.toFixed(2)}</Text></View>
+            <View style={styles.xyzCard}><Text style={styles.xyzLabel}>Z</Text><Text style={styles.xyzValue}>{telemetry.acceleration_z.toFixed(2)}</Text></View>
+          </View>
+
+          <Text style={[styles.gValue, { color: impactAlert ? '#ff4b4b' : '#ff5e5e' }]}>{telemetry.g_force.toFixed(2)} G</Text>
+
+          <View style={styles.chartShell}>
+            <TelemetryChart
+              data={history.map((value) => ({ value }))}
+              title="G-Force"
+              color={impactAlert ? '#ff4b4b' : '#ff5e5e'}
+              maxValue={Math.max(3, settings.impact_threshold + 3)}
+              threshold={settings.impact_threshold}
+              unit="G"
+            />
+          </View>
         </BlurView>
+
+        <TouchableOpacity style={styles.contactShortcut} onPress={() => router.push('/contacts')} activeOpacity={0.85}>
+          <Ionicons name="people" size={16} color="#22d3ee" />
+          <Text style={styles.contactShortcutText}>Contactos de emergencia: {contacts.length}</Text>
+        </TouchableOpacity>
       </ScrollView>
+
       <EmergencyModal visible={isEmergencyActive} impact={currentImpact} onClose={() => setEmergencyActive(false)} />
     </SafeAreaView>
   );
@@ -251,22 +283,33 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { padding: 16, paddingBottom: 100, gap: 12 },
-  hero: { borderRadius: 22, borderWidth: 1, padding: 18, overflow: 'hidden' },
-  title: { fontSize: 28, fontWeight: '900' },
-  subtitle: { marginTop: 8, fontSize: 14, fontWeight: '500' },
-  statusPill: { marginTop: 14, borderWidth: 1, paddingVertical: 7, paddingHorizontal: 10, borderRadius: 999, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start' },
-  dot: { width: 10, height: 10, borderRadius: 999, marginRight: 8 },
-  statusText: { fontWeight: '800' },
-  bentoGrid: { marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  bentoCard: { width: '48%', minHeight: 122, borderRadius: 18, borderWidth: 1, padding: 14, overflow: 'hidden' },
-  fullCard: { width: '100%', minHeight: 260 },
-  cardLabel: { fontSize: 13, fontWeight: '600' },
-  cardValue: { marginTop: 10, fontSize: 24, fontWeight: '900' },
-  sectionTitle: { fontSize: 24, fontWeight: '900', marginBottom: 12 },
-  telemetryRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  metric: { flex: 1, minWidth: '23%', backgroundColor: 'rgba(15,23,42,0.55)', borderRadius: 12, padding: 8, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
-  metricLabel: { color: '#94a3b8', fontWeight: '700', textAlign: 'center' },
-  metricValue: { color: '#fff', fontWeight: '900', fontSize: 16, textAlign: 'center', marginTop: 4 },
-  footerCard: { marginTop: 12, borderRadius: 16, borderWidth: 1, padding: 14 },
+  scroll: { padding: 14, paddingBottom: 100, gap: 12 },
+  heroCard: { borderRadius: 22, borderWidth: 1, padding: 16, overflow: 'hidden' },
+  heroHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  brand: { fontSize: 28, fontWeight: '900', letterSpacing: 2 },
+  heroSubtitle: { fontSize: 15, fontWeight: '500', marginTop: -6 },
+  statusPill: { marginTop: 14, borderWidth: 1, borderRadius: 999, paddingVertical: 9, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: 8 },
+  dot: { width: 11, height: 11, borderRadius: 999 },
+  statusText: { fontWeight: '800', fontSize: 16 },
+  statusDivider: { color: '#64748b', marginHorizontal: 2 },
+  statusChannel: { color: '#22c55e', fontWeight: '800' },
+  linkedText: { marginTop: 12, fontSize: 13, fontWeight: '700' },
+  statsRow: { flexDirection: 'row', gap: 10 },
+  statCard: { flex: 1, borderRadius: 18, borderWidth: 1, padding: 12 },
+  statLabel: { color: '#94a3b8', fontSize: 13, fontWeight: '700' },
+  statValue: { fontSize: 30, fontWeight: '900', marginTop: 4 },
+  statHint: { color: '#64748b', fontSize: 14, fontWeight: '600' },
+  batteryHeader: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  batteryTrack: { marginTop: 8, height: 8, borderRadius: 999, backgroundColor: 'rgba(148,163,184,0.3)', overflow: 'hidden' },
+  batteryFill: { height: '100%', borderRadius: 999 },
+  telemetryCard: { borderRadius: 22, borderWidth: 1, padding: 14 },
+  telemetryTitle: { fontSize: 24, fontWeight: '900', marginBottom: 12 },
+  xyzRow: { flexDirection: 'row', gap: 10 },
+  xyzCard: { flex: 1, borderRadius: 16, backgroundColor: 'rgba(30,41,59,0.72)', paddingVertical: 14, borderWidth: 1, borderColor: 'rgba(148,163,184,0.2)' },
+  xyzLabel: { color: '#94a3b8', fontWeight: '700', textAlign: 'center', fontSize: 15 },
+  xyzValue: { color: '#fff', textAlign: 'center', fontWeight: '900', fontSize: 22, marginTop: 4 },
+  gValue: { fontSize: 56, fontWeight: '900', textAlign: 'center', marginVertical: 14 },
+  chartShell: { backgroundColor: 'rgba(30,41,59,0.75)', borderRadius: 20, padding: 10 },
+  contactShortcut: { marginTop: 2, borderRadius: 14, borderWidth: 1, borderColor: '#1f3356', paddingVertical: 10, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(4,18,40,0.7)' },
+  contactShortcutText: { color: '#cbd5e1', fontWeight: '700' },
 });
