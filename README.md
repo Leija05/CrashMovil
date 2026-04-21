@@ -51,6 +51,27 @@ Luego inicia Expo:
 npx expo start
 ```
 
+## 🧪 Cuenta Developer y pruebas sin circuito
+
+Configura en `backend/.env` (puedes copiar desde `backend/.env.example`) estas variables para habilitar una cuenta con rol **developer**:
+
+```bash
+DEV_ACCOUNT_EMAIL=dev@crash.local
+DEV_ACCOUNT_PASSWORD=ChangeMe123!
+DEV_ACCOUNT_FULL_NAME=Crash Developer
+DEV_ACCOUNT_PHONE=+10000000000
+```
+
+Notas importantes:
+- Solo esa cuenta recibe rol `developer`.
+- El registro normal (`/auth/register`) siempre crea usuarios con rol `user`.
+- En la pestaña **Settings**, al iniciar sesión con esa cuenta aparecerá **Developer Lab (sin circuito)** para simular:
+  - conexión/desconexión Bluetooth (BTL),
+  - detección de fuerza G,
+  - ejecución de diagnóstico IA,
+  - creación de impacto y disparo de alertas,
+  - cuenta regresiva de emergencia.
+
 ## ⚠️ Por qué te aparece `400 Bad Request` en `/api/auth/register`
 
 Ese `400` en tu backend normalmente significa que la petición sí llegó, pero el payload no pasó validación de negocio. En este proyecto, las causas más comunes son:

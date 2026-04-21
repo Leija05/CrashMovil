@@ -65,6 +65,7 @@ class User(BaseModel):
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     auth_provider: str = "password"
+    role: str = "user"  # user | developer
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -74,6 +75,7 @@ class UserPublic(BaseModel):
     full_name: Optional[str] = None
     phone_number: Optional[str] = None
     auth_provider: str
+    role: str = "user"
 
 
 class RegisterRequest(BaseModel):
@@ -706,7 +708,17 @@ def to_public_user(user: User) -> UserPublic:
         full_name=user.full_name,
         phone_number=user.phone_number,
         auth_provider=user.auth_provider,
+        role=user.role,
     )
+
+
+def get_developer_credentials() -> Dict[str, Optional[str]]:
+    return {
+        "email": os.getenv("DEV_ACCOUNT_EMAIL"),
+        "password": os.getenv("DEV_ACCOUNT_PASSWORD"),
+        "full_name": os.getenv("DEV_ACCOUNT_FULL_NAME", "Developer QA"),
+        "phone_number": os.getenv("DEV_ACCOUNT_PHONE", "+10000000000"),
+    }
 
 
 # ==================== LIFECYCLE ====================
@@ -755,6 +767,7 @@ async def register(payload: RegisterRequest) -> AuthResponse:
         full_name=payload.full_name,
         phone_number=normalized_phone,
         auth_provider="password",
+        role="user",
         password_hash=hash_password(payload.password),
     )
     await db.users.insert_one(user.model_dump())
@@ -768,6 +781,42 @@ async def register(payload: RegisterRequest) -> AuthResponse:
 
 @api_router.post("/auth/login", response_model=AuthResponse)
 async def login(payload: LoginRequest) -> AuthResponse:
+    developer_creds = get_developer_credentials()
+    requested_email = payload.email.lower()
+    if (
+        developer_creds["email"]
+        and developer_creds["password"]
+        and requested_email == developer_creds["email"].lower()
+        and payload.password == developer_creds["password"]
+    ):
+        existing = await db.users.find_one({"email": requested_email})
+        if existing:
+            await db.users.update_one(
+                {"id": existing["id"]},
+                {
+                    "$set": {
+                        "role": "developer",
+                        "auth_provider": "password",
+                        "full_name": developer_creds["full_name"],
+                        "phone_number": normalize_phone_number(developer_creds["phone_number"] or "+10000000000"),
+                    }
+                },
+            )
+            refreshed = await db.users.find_one({"id": existing["id"]})
+            user = User(**sanitize_doc(refreshed))
+        else:
+            user = User(
+                email=requested_email,
+                password_hash=hash_password(payload.password),
+                full_name=developer_creds["full_name"],
+                phone_number=normalize_phone_number(developer_creds["phone_number"] or "+10000000000"),
+                auth_provider="password",
+                role="developer",
+            )
+            await db.users.insert_one(user.model_dump())
+        token = create_access_token(user.id)
+        return AuthResponse(access_token=token, user=to_public_user(user))
+
     user_doc = await db.users.find_one({"email": payload.email.lower()})
     if not user_doc:
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -790,6 +839,7 @@ async def oauth_login(payload: OAuthLoginRequest) -> AuthResponse:
             email=payload.email.lower(),
             full_name=payload.full_name,
             auth_provider=payload.provider,
+            role="user",
             password_hash=None,
         )
         await db.users.insert_one(user.model_dump())

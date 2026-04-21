@@ -20,7 +20,7 @@ import * as Haptics from 'expo-haptics';
 import { useTranslation } from 'react-i18next';
 import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
-import { settingsApi } from '../../src/services/api';
+import { diagnosisApi, impactsApi, settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
 import {
   bluetoothTelemetryService,
@@ -36,6 +36,9 @@ export default function SettingsScreen() {
   const [deviceName, setDeviceName] = useState(settings.device_name);
   const [isScanning, setIsScanning] = useState(false);
   const [detectedName, setDetectedName] = useState<string | null>(null);
+  const [devGForce, setDevGForce] = useState(String(Math.max(8, settings.impact_threshold + 2)));
+  const [devRunning, setDevRunning] = useState(false);
+  const [devAiSummary, setDevAiSummary] = useState<string | null>(null);
   const toast = (message: string) => {
     Haptics.selectionAsync().catch(() => undefined);
     if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
@@ -138,6 +141,92 @@ export default function SettingsScreen() {
   const handleDeviceNameSave = () => {
     if (!deviceName.trim()) return;
     handleUpdateSettings({ device_name: deviceName.trim() });
+  };
+
+  const startDeveloperCountdownPreview = () => {
+    const { setCountdown, setEmergencyActive } = useCrashStore.getState();
+    setEmergencyActive(true);
+    setCountdown(settings.countdown_seconds);
+    let current = settings.countdown_seconds;
+    const timer = setInterval(() => {
+      current -= 1;
+      if (current <= 0) {
+        setCountdown(0);
+        setEmergencyActive(false);
+        clearInterval(timer);
+        return;
+      }
+      setCountdown(current);
+    }, 1000);
+  };
+
+  const runDeveloperSimulation = async () => {
+    if (!user || user.role !== 'developer') return;
+    const numericG = Number(devGForce);
+    const safeG = Number.isFinite(numericG) ? Math.max(1, numericG) : settings.impact_threshold + 2;
+    const telemetryPayload = {
+      g_force: safeG,
+      acceleration_x: safeG / 2,
+      acceleration_y: safeG / 3,
+      acceleration_z: 1 + safeG / 4,
+      gyro_x: safeG * 0.8,
+      gyro_y: safeG * 0.6,
+      gyro_z: safeG * 0.4,
+      latitude: 19.4326,
+      longitude: -99.1332,
+    };
+
+    const {
+      setConnected: setStoreConnected,
+      setConnectedDeviceName: setStoreConnectedDeviceName,
+      setTelemetry,
+      setCurrentImpact,
+      setEmergencyActive,
+      setCountdown,
+      countdown,
+    } = useCrashStore.getState();
+
+    setDevRunning(true);
+    try {
+      setStoreConnected(true);
+      setStoreConnectedDeviceName('DEV-SIM-BTL');
+      setTelemetry(telemetryPayload);
+
+      const diagnosis = await diagnosisApi.get({
+        ...telemetryPayload,
+        blood_type: undefined,
+        allergies: undefined,
+        medical_conditions: undefined,
+        language: settings.language,
+      });
+      setDevAiSummary(diagnosis.data?.severity_assessment ?? null);
+
+      const impactResponse = await impactsApi.create(telemetryPayload);
+      setCurrentImpact(impactResponse.data);
+      setEmergencyActive(true);
+      setCountdown(countdown || settings.countdown_seconds);
+      startDeveloperCountdownPreview();
+
+      toast(
+        settings.language === 'es'
+          ? 'Simulación completada: IA + impacto + alertas enviadas.'
+          : 'Simulation completed: AI + impact + alerts sent.',
+      );
+    } catch (error) {
+      Alert.alert(
+        settings.language === 'es' ? 'Error simulación' : 'Simulation error',
+        error instanceof Error ? error.message : 'Unknown error',
+      );
+    } finally {
+      setDevRunning(false);
+    }
+  };
+
+  const simulateDeveloperBluetoothDisconnect = () => {
+    const { setConnected: setStoreConnected, setConnectedDeviceName: setStoreConnectedDeviceName } = useCrashStore.getState();
+    setStoreConnected(false);
+    setStoreConnectedDeviceName(null);
+    toast(settings.language === 'es' ? 'Bluetooth simulado desconectado.' : 'Simulated Bluetooth disconnected.');
   };
 
   return (
@@ -308,6 +397,52 @@ export default function SettingsScreen() {
             </TouchableOpacity>
           </View>
         </BlurView>
+
+        {user?.role === 'developer' && (
+          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+            <View style={styles.sectionHeader}>
+              <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
+                {settings.language === 'es' ? 'Developer Lab (sin circuito)' : 'Developer Lab (no hardware)'}
+              </Text>
+              {devRunning && <ActivityIndicator size="small" color="#22d3ee" />}
+            </View>
+            <Text style={styles.sectionSubtitle}>
+              {settings.language === 'es'
+                ? 'Prueba IA, detección de fuerza, cuenta regresiva, envío de alertas y Bluetooth usando datos simulados.'
+                : 'Test AI, force detection, countdown, emergency dispatch and Bluetooth using simulated data.'}
+            </Text>
+            <Text style={[styles.toggleLabel, isDark ? styles.textDark : styles.textLight]}>
+              {settings.language === 'es' ? 'Fuerza simulada (G)' : 'Simulated force (G)'}
+            </Text>
+            <TextInput
+              keyboardType="decimal-pad"
+              value={devGForce}
+              onChangeText={setDevGForce}
+              style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
+              placeholder="9.5"
+              placeholderTextColor="#888"
+            />
+            <View style={styles.devRow}>
+              <TouchableOpacity style={styles.devPrimaryButton} onPress={runDeveloperSimulation} disabled={devRunning}>
+                <Ionicons name="flask" size={16} color="#001017" />
+                <Text style={styles.devPrimaryText}>
+                  {settings.language === 'es' ? 'Ejecutar test integral' : 'Run full test'}
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.devSecondaryButton} onPress={simulateDeveloperBluetoothDisconnect}>
+                <Ionicons name="bluetooth" size={16} color="#fff" />
+                <Text style={styles.devSecondaryText}>
+                  {settings.language === 'es' ? 'BTL OFF' : 'BTL OFF'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            {!!devAiSummary && (
+              <Text style={styles.devSummaryText}>
+                IA: {devAiSummary}
+              </Text>
+            )}
+          </BlurView>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -348,4 +483,10 @@ const styles = StyleSheet.create({
   optionTextActive: { fontWeight: '700', color: '#042f2e' },
   badge: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999, backgroundColor: 'rgba(34,197,94,0.15)' },
   badgeText: { color: '#22c55e', fontWeight: '700', fontSize: 12 },
+  devRow: { marginTop: 12, flexDirection: 'row', gap: 10 },
+  devPrimaryButton: { flex: 1, borderRadius: 12, backgroundColor: '#22d3ee', paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 6 },
+  devPrimaryText: { color: '#001017', fontWeight: '800' },
+  devSecondaryButton: { borderRadius: 12, backgroundColor: '#0f172a', paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  devSecondaryText: { color: '#fff', fontWeight: '700' },
+  devSummaryText: { marginTop: 10, color: '#38bdf8', fontWeight: '600' },
 });
