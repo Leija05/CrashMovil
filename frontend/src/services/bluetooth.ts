@@ -112,6 +112,10 @@ class BluetoothTelemetryService {
   private animationFrameId: number | null = null;
   private pendingTelemetry: TelemetryData | null = null;
   private isUserDisconnecting = false;
+  private latestTelemetrySentAt = 0;
+  private readonly telemetryThrottleMs = 220;
+  private readonly minSignificantGForceDelta = 0.15;
+  private lastTelemetryDispatched: TelemetryData | null = null;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
@@ -154,22 +158,25 @@ class BluetoothTelemetryService {
 
   private async establishConnection(
     deviceId: string, 
-    onTelemetry: (telemetry: TelemetryData) => void
+    onTelemetry: (telemetry: TelemetryData) => void,
+    onDeviceDetected: (device: ScanDevice | null) => void
   ) {
     if (!manager || this.isUserDisconnecting) return;
 
     try {
       this.connectedDevice = await manager.connectToDevice(deviceId, { timeout: 10000 });
+      onDeviceDetected(normalizeDevice(this.connectedDevice));
       if (Platform.OS === 'android') await this.connectedDevice.requestMTU(512);
 
       await this.connectedDevice.discoverAllServicesAndCharacteristics();
 
       // Reconexión automática más robusta
       this.connectedDevice.onDisconnected(() => {
+        onDeviceDetected(null);
         if (!this.isUserDisconnecting) {
           console.warn('Reconectando...');
           // Delay para evitar bucles infinitos inmediatos
-          setTimeout(() => this.establishConnection(deviceId, onTelemetry), 2000);
+          setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 2000);
         }
       });
 
@@ -189,6 +196,14 @@ class BluetoothTelemetryService {
 
       // Función de envío optimizada para la UI
       const optimizedOnTelemetry = (data: TelemetryData) => {
+        const now = Date.now();
+        const shouldSendByTime = now - this.latestTelemetrySentAt >= this.telemetryThrottleMs;
+        const lastG = this.lastTelemetryDispatched?.g_force ?? 0;
+        const shouldSendByImpact = Math.abs(data.g_force - lastG) >= this.minSignificantGForceDelta;
+        if (!shouldSendByTime && !shouldSendByImpact) return;
+
+        this.latestTelemetrySentAt = now;
+        this.lastTelemetryDispatched = data;
         this.pendingTelemetry = data;
         if (!this.animationFrameId) {
           this.animationFrameId = requestAnimationFrame(() => {
@@ -206,8 +221,9 @@ class BluetoothTelemetryService {
       });
 
     } catch (error) {
+      onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
-        setTimeout(() => this.establishConnection(deviceId, onTelemetry), 3000);
+        setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);
       }
     }
   }
@@ -218,15 +234,19 @@ class BluetoothTelemetryService {
     onTelemetry: (telemetry: TelemetryData) => void
   ) {
     this.isUserDisconnecting = false;
-    if (this.connectedDevice) return; // Evitar múltiples conexiones
+    if (this.connectedDevice) {
+      onDeviceDetected(normalizeDevice(this.connectedDevice));
+      return; // Evitar múltiples conexiones
+    }
 
     await this.requestPermissions();
     const candidates = await this.findHardwareCandidates(preferredNames);
     const matchedDevice = candidates[0] ?? null;
-    onDeviceDetected(matchedDevice);
 
     if (matchedDevice) {
-      await this.establishConnection(matchedDevice.id, onTelemetry);
+      await this.establishConnection(matchedDevice.id, onTelemetry, onDeviceDetected);
+    } else {
+      onDeviceDetected(null);
     }
   }
 

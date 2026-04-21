@@ -151,4 +151,9 @@ export const healthApi = {
   check: () => api.get('/health'),
 };
 
+export const devApi = {
+  sendEmergencyTemplateTest: (data?: { contact_id?: string }) =>
+    api.post('/integrations/whatsapp/test-template', data ?? {}),
+};
+
 export default api;

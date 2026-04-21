@@ -1,8 +1,7 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { useCrashStore } from '../store/crashStore';
-import { useState } from 'react';
 
 interface DataPoint {
   value: number;
@@ -22,6 +21,7 @@ export const TelemetryChart: React.FC<TelemetryChartProps> = ({ data, title, col
   const { settings } = useCrashStore();
   const isDark = settings.theme === 'dark';
   const [containerWidth, setContainerWidth] = useState(0);
+  const lastWidthRef = useRef(0);
   const computedMaxValue = useMemo(() => {
     if (typeof maxValue === 'number' && Number.isFinite(maxValue)) {
       return maxValue;
@@ -43,7 +43,12 @@ export const TelemetryChart: React.FC<TelemetryChartProps> = ({ data, title, col
   return (
     <View
       style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}
-      onLayout={(event) => setContainerWidth(event.nativeEvent.layout.width)}
+      onLayout={(event) => {
+        const nextWidth = Math.round(event.nativeEvent.layout.width);
+        if (Math.abs(nextWidth - lastWidthRef.current) < 2) return;
+        lastWidthRef.current = nextWidth;
+        setContainerWidth(nextWidth);
+      }}
     >
       <View style={styles.header}>
         <Text style={[styles.title, isDark ? styles.textDark : styles.textLight]}>{title}</Text>

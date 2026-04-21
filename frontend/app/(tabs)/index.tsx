@@ -28,7 +28,8 @@ import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { useCrashStore } from '../../src/store/crashStore';
 
 const IMPACT_COOLDOWN_MS = 12000;
-const SENSOR_TIMEOUT_MS = 3500;
+const SENSOR_TIMEOUT_MS = 7000;
+const HIGH_FORCE_ALERT_COOLDOWN_MS = 8000;
 
 const notify = (message: string) => {
   if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
@@ -47,7 +48,6 @@ export default function HomeScreen() {
     currentLocation,
     isEmergencyActive,
     currentImpact,
-    impacts,
     contacts,
     user,
     setTelemetry,
@@ -70,17 +70,24 @@ export default function HomeScreen() {
 
   const lastTelemetryAt = useRef(Date.now());
   const lastImpactAt = useRef(0);
+  const lastHighForceAlertAt = useRef(0);
   const heroAnim = useRef(new Animated.Value(0)).current;
 
   // NUEVO: Refs para evitar cierres (closures) obsoletos en el listener de alta frecuencia
   const telemetryRef = useRef(telemetry);
   const settingsRef = useRef(settings);
+  const isConnectedRef = useRef(isConnected);
+  const connectedDeviceNameRef = useRef(connectedDeviceName);
+  const sensorOfflineRef = useRef(sensorOffline);
 
   // Sincronizamos los refs cada vez que el estado cambia
   useEffect(() => {
     telemetryRef.current = telemetry;
     settingsRef.current = settings;
-  }, [telemetry, settings]);
+    isConnectedRef.current = isConnected;
+    connectedDeviceNameRef.current = connectedDeviceName;
+    sensorOfflineRef.current = sensorOffline;
+  }, [connectedDeviceName, isConnected, sensorOffline, telemetry, settings]);
 
   const glass = isDark
     ? { borderColor: '#1f3356', bg: 'rgba(10,24,51,0.86)' }
@@ -112,11 +119,19 @@ export default function HomeScreen() {
     await bluetoothTelemetryService.startPassiveTelemetryListener(
       [settingsRef.current.device_name, 'HC-05', 'HM-10'],
       (device) => {
-        setConnected(Boolean(device));
+        const connected = Boolean(device);
+        setConnected(connected);
         setConnectedDeviceName(device?.name ?? null);
-        if (!device) {
+        if (!connected) {
           setSensorOffline(true);
           notify(settingsRef.current.language === 'es' ? 'Sensor desconectado' : 'Sensor disconnected');
+        } else {
+          setSensorOffline(false);
+          notify(
+            settingsRef.current.language === 'es'
+              ? `Módulo conectado: ${device?.name ?? 'Bluetooth'}`
+              : `Module connected: ${device?.name ?? 'Bluetooth'}`,
+          );
         }
       },
       (incomingTelemetry) => {
@@ -141,7 +156,11 @@ export default function HomeScreen() {
     setImpactAlert(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
 
-    const response = await impactsApi.create({
+    const severity =
+      currentT.g_force < 5 ? 'low' : currentT.g_force < 10 ? 'medium' : currentT.g_force < 15 ? 'high' : 'critical';
+    setCurrentImpact({
+      id: `pending-${now}`,
+      timestamp: new Date(now).toISOString(),
       g_force: currentT.g_force,
       acceleration_x: currentT.acceleration_x,
       acceleration_y: currentT.acceleration_y,
@@ -149,14 +168,14 @@ export default function HomeScreen() {
       gyro_x: currentT.gyro_x,
       gyro_y: currentT.gyro_y,
       gyro_z: currentT.gyro_z,
+      severity,
       latitude: currentLocation?.latitude,
       longitude: currentLocation?.longitude,
+      was_false_alarm: false,
+      alerts_dispatched: 0,
     });
-
-    setCurrentImpact(response.data);
     setEmergencyActive(true);
-    setImpacts([response.data, ...impacts]);
-  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, user]);
+  }, [currentLocation?.latitude, currentLocation?.longitude, isConnected, setCurrentImpact, setEmergencyActive, user]);
 
   useEffect(() => {
     Animated.timing(heroAnim, { toValue: 1, duration: 550, useNativeDriver: true }).start();
@@ -165,12 +184,12 @@ export default function HomeScreen() {
     const timer = setInterval(() => {
       const now = Date.now();
       // Aumentamos el margen a 5000ms para compensar la latencia del HC-05
-      const timedOut = now - lastTelemetryAt.current > 5000;
+      const timedOut = now - lastTelemetryAt.current > SENSOR_TIMEOUT_MS;
 
-      if (timedOut && !sensorOffline) {
+      if (timedOut && !sensorOfflineRef.current) {
         setSensorOffline(true);
-        // Solo notificamos si realmente hay una conexión activa pero vacía
-        if (isConnected) {
+        // Solo notificamos si realmente hay una conexión activa pero sin datos
+        if (isConnectedRef.current && connectedDeviceNameRef.current) {
           notify(settingsRef.current.language === 'es' ? 'Buscando datos del sensor...' : 'Waiting for sensor data...');
         }
       }
@@ -187,14 +206,26 @@ export default function HomeScreen() {
 
     return () => {
       clearInterval(timer);
-      bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
-  }, [heroAnim, startBluetooth, isConnected]); // Se eliminó sensorOffline de aquí para evitar ciclos infinitos
+  }, [heroAnim, setCurrentLocation, startBluetooth]);
 
   useEffect(() => {
     triggerImpactFlow().catch(() => undefined);
     setImpactAlert(telemetry.g_force >= settings.impact_threshold);
   }, [settings.impact_threshold, telemetry.g_force, triggerImpactFlow]);
+
+  useEffect(() => {
+    const crossedHighForce = telemetry.g_force >= settings.impact_threshold;
+    if (!crossedHighForce) return;
+    const now = Date.now();
+    if (now - lastHighForceAlertAt.current < HIGH_FORCE_ALERT_COOLDOWN_MS) return;
+    lastHighForceAlertAt.current = now;
+    notify(
+      settings.language === 'es'
+        ? `⚠️ Fuerza alta detectada (${telemetry.g_force.toFixed(1)}G)`
+        : `⚠️ High force detected (${telemetry.g_force.toFixed(1)}G)`,
+    );
+  }, [settings.impact_threshold, settings.language, telemetry.g_force]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -210,6 +241,7 @@ export default function HomeScreen() {
   }, [impactAlert, isConnected, sensorOffline]);
 
   const batteryTone = batteryLevel > 60 ? '#22c55e' : batteryLevel > 30 ? '#f59e0b' : '#ef4444';
+  const chartPoints = useMemo(() => history.map((value) => ({ value })), [history]);
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: isDark ? '#02071E' : '#EFF3FB' }]}>
@@ -281,7 +313,7 @@ export default function HomeScreen() {
 
           <View style={styles.chartShell}>
             <TelemetryChart
-              data={history.map((value) => ({ value }))}
+              data={chartPoints}
               title="G-Force"
               color={impactAlert ? '#ff4b4b' : '#ff5e5e'}
               maxValue={Math.max(3, settings.impact_threshold + 3)}
