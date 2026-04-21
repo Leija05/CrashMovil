@@ -28,7 +28,6 @@ import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { useCrashStore } from '../../src/store/crashStore';
 
 const IMPACT_COOLDOWN_MS = 12000;
-const SENSOR_TIMEOUT_MS = 3500;
 
 const notify = (message: string) => {
   if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
@@ -70,13 +69,13 @@ export default function HomeScreen() {
 
   const lastTelemetryAt = useRef(Date.now());
   const lastImpactAt = useRef(0);
+  const lastChartUpdateAt = useRef(0); // Control de frecuencia para el gráfico
   const heroAnim = useRef(new Animated.Value(0)).current;
 
-  // NUEVO: Refs para evitar cierres (closures) obsoletos en el listener de alta frecuencia
+  // Refs para evitar closures obsoletos en callbacks de alta frecuencia
   const telemetryRef = useRef(telemetry);
   const settingsRef = useRef(settings);
 
-  // Sincronizamos los refs cada vez que el estado cambia
   useEffect(() => {
     telemetryRef.current = telemetry;
     settingsRef.current = settings;
@@ -88,17 +87,20 @@ export default function HomeScreen() {
 
   const loadData = useCallback(async () => {
     if (!user) return;
-    const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
-      contactsApi.getAll(),
-      impactsApi.getAll(),
-      settingsApi.get(),
-      statsApi.get(),
-    ]);
-
-    setContacts(contactsRes.data);
-    setImpacts(impactsRes.data);
-    setSettings(settingsRes.data);
-    setStats(statsRes.data);
+    try {
+      const [contactsRes, impactsRes, settingsRes, statsRes] = await Promise.all([
+        contactsApi.getAll(),
+        impactsApi.getAll(),
+        settingsApi.get(),
+        statsApi.get(),
+      ]);
+      setContacts(contactsRes.data);
+      setImpacts(impactsRes.data);
+      setSettings(settingsRes.data);
+      setStats(statsRes.data);
+    } catch (e) {
+      console.debug('Error cargando datos iniciales');
+    }
   }, [setContacts, setImpacts, setSettings, user]);
 
   useFocusEffect(
@@ -108,7 +110,6 @@ export default function HomeScreen() {
   );
 
   const startBluetooth = useCallback(async () => {
-    // Usamos las propiedades de los refs para que el listener siempre tenga data fresca
     await bluetoothTelemetryService.startPassiveTelemetryListener(
       [settingsRef.current.device_name, 'HC-05', 'HM-10'],
       (device) => {
@@ -116,20 +117,26 @@ export default function HomeScreen() {
         setConnectedDeviceName(device?.name ?? null);
         if (!device) {
           setSensorOffline(true);
-          notify(settingsRef.current.language === 'es' ? 'Sensor desconectado' : 'Sensor disconnected');
         }
       },
       (incomingTelemetry) => {
         lastTelemetryAt.current = Date.now();
         setSensorOffline(false);
+        
+        // 1. Actualización de datos numéricos (Inmediata para lógica de impacto)
         setTelemetry(incomingTelemetry);
-        setHistory((prev) => [...prev.slice(-59), incomingTelemetry.g_force]);
+
+        // 2. Throttling del Gráfico (Evita el loop infinito de renderizado)
+        const now = Date.now();
+        if (now - lastChartUpdateAt.current > 120) { // ~8 FPS es suficiente para visualización
+          setHistory((prev) => [...prev.slice(-59), incomingTelemetry.g_force]);
+          lastChartUpdateAt.current = now;
+        }
       },
     );
   }, [setConnected, setConnectedDeviceName, setTelemetry]);
 
   const triggerImpactFlow = useCallback(async () => {
-    // Acceso mediante refs para garantizar tiempo real extremo
     const currentT = telemetryRef.current;
     const currentS = settingsRef.current;
 
@@ -141,22 +148,26 @@ export default function HomeScreen() {
     setImpactAlert(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => undefined);
 
-    const response = await impactsApi.create({
-      g_force: currentT.g_force,
-      acceleration_x: currentT.acceleration_x,
-      acceleration_y: currentT.acceleration_y,
-      acceleration_z: currentT.acceleration_z,
-      gyro_x: currentT.gyro_x,
-      gyro_y: currentT.gyro_y,
-      gyro_z: currentT.gyro_z,
-      latitude: currentLocation?.latitude,
-      longitude: currentLocation?.longitude,
-    });
+    try {
+      const response = await impactsApi.create({
+        g_force: currentT.g_force,
+        acceleration_x: currentT.acceleration_x,
+        acceleration_y: currentT.acceleration_y,
+        acceleration_z: currentT.acceleration_z,
+        gyro_x: currentT.gyro_x,
+        gyro_y: currentT.gyro_y,
+        gyro_z: currentT.gyro_z,
+        latitude: currentLocation?.latitude,
+        longitude: currentLocation?.longitude,
+      });
 
-    setCurrentImpact(response.data);
-    setEmergencyActive(true);
-    setImpacts([response.data, ...impacts]);
-  }, [currentLocation?.latitude, currentLocation?.longitude, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, user]);
+      setCurrentImpact(response.data);
+      setEmergencyActive(true);
+      setImpacts([response.data, ...impacts]);
+    } catch (e) {
+      console.error("Error al registrar impacto");
+    }
+  }, [currentLocation, impacts, isConnected, setCurrentImpact, setEmergencyActive, setImpacts, user]);
 
   useEffect(() => {
     Animated.timing(heroAnim, { toValue: 1, duration: 550, useNativeDriver: true }).start();
@@ -164,17 +175,13 @@ export default function HomeScreen() {
 
     const timer = setInterval(() => {
       const now = Date.now();
-      // Aumentamos el margen a 5000ms para compensar la latencia del HC-05
       const timedOut = now - lastTelemetryAt.current > 5000;
 
-      if (timedOut && !sensorOffline) {
+      if (timedOut && !sensorOffline && isConnected) {
         setSensorOffline(true);
-        // Solo notificamos si realmente hay una conexión activa pero vacía
-        if (isConnected) {
-          notify(settingsRef.current.language === 'es' ? 'Buscando datos del sensor...' : 'Waiting for sensor data...');
-        }
+        notify(settingsRef.current.language === 'es' ? 'Buscando datos del sensor...' : 'Waiting for sensor data...');
       }
-    }, 2000); // Verificamos cada 2 segundos para no saturar el hilo principal
+    }, 2000);
 
     Location.requestForegroundPermissionsAsync()
       .then(({ status }) => (status === 'granted' ? Location.getCurrentPositionAsync({}) : null))
@@ -189,11 +196,15 @@ export default function HomeScreen() {
       clearInterval(timer);
       bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
-  }, [heroAnim, startBluetooth, isConnected]); // Se eliminó sensorOffline de aquí para evitar ciclos infinitos
+  }, [heroAnim, startBluetooth, isConnected]);
 
   useEffect(() => {
-    triggerImpactFlow().catch(() => undefined);
-    setImpactAlert(telemetry.g_force >= settings.impact_threshold);
+    if (telemetry.g_force >= settings.impact_threshold) {
+      triggerImpactFlow().catch(() => undefined);
+      setImpactAlert(true);
+    } else {
+      setImpactAlert(false);
+    }
   }, [settings.impact_threshold, telemetry.g_force, triggerImpactFlow]);
 
   const onRefresh = useCallback(async () => {
@@ -256,20 +267,14 @@ export default function HomeScreen() {
           </BlurView>
 
           <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
-            <Text style={styles.statLabel}>Registros</Text>
+            <Text style={styles.statLabel}>Impactos</Text>
             <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{stats.real_impacts}</Text>
-            <Text style={styles.statHint}>Contactos: {contacts.length}</Text>
-          </BlurView>
-
-          <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.statCard, { borderColor: glass.borderColor, backgroundColor: glass.bg }]}>
-            <Text style={styles.statLabel}>Ubicación</Text>
-            <Text style={[styles.statValue, { color: isDark ? '#fff' : '#0f172a' }]}>{currentLocation ? 'GPS' : '--'}</Text>
-            <Text style={styles.statHint}>{currentLocation ? 'Disponible' : 'Sin señal'}</Text>
+            <Text style={styles.statHint}>Total: {stats.total_impacts}</Text>
           </BlurView>
         </View>
 
         <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.telemetryCard, { borderColor: impactAlert ? '#ef4444' : glass.borderColor, backgroundColor: glass.bg }]}>
-          <Text style={[styles.telemetryTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en Tiempo Real</Text>
+          <Text style={[styles.telemetryTitle, { color: isDark ? '#fff' : '#0f172a' }]}>Telemetría en Vivo</Text>
 
           <View style={styles.xyzRow}>
             <View style={styles.xyzCard}><Text style={styles.xyzLabel}>X</Text><Text style={styles.xyzValue}>{telemetry.acceleration_x.toFixed(2)}</Text></View>
@@ -281,10 +286,10 @@ export default function HomeScreen() {
 
           <View style={styles.chartShell}>
             <TelemetryChart
-              data={history.map((value) => ({ value }))}
+              data={history.map((v) => ({ value: v }))}
               title="G-Force"
               color={impactAlert ? '#ff4b4b' : '#ff5e5e'}
-              maxValue={Math.max(3, settings.impact_threshold + 3)}
+              maxValue={Math.max(4, settings.impact_threshold + 2)}
               threshold={settings.impact_threshold}
               unit="G"
             />

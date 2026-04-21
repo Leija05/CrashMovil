@@ -9,10 +9,11 @@ from typing import Any, Dict, List, Optional
 
 import jwt
 import httpx
+from pydantic import ValidationError # Útil para validar la respuesta
 from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer
-from google import genai
+from google import genai # Asegúrate de usar la última versión del SDK
 from motor.motor_asyncio import AsyncIOMotorClient
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
@@ -433,20 +434,24 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
     return message_id or "sent"
 
 
-async def send_whatsapp_template_message(to_phone: str) -> str:
+async def send_whatsapp_template_message(
+    to_phone: str, 
+    severity: str = "HIGH", 
+    diagnosis: str = "Impacto detectado", 
+    location: str = "Ubicación no disponible", 
+    recommendation: str = "Asegure el área"
+) -> str:
     if not is_whatsapp_ready():
-        raise ValueError(
-            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
-        )
+        raise ValueError("WhatsApp Cloud API no está configurada.")
+        
     normalized_phone = normalize_phone_number(to_phone)
-    endpoint = (
-        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
-        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
-    )
+    endpoint = f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
+    
+    # Aquí está el cambio clave: añadir 'components' con los 4 parámetros
     payload = {
         "messaging_product": "whatsapp",
         "to": normalized_phone,
@@ -454,25 +459,30 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         "template": {
             "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
             "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [
+                        {"type": "text", "text": severity},       # {{1}}
+                        {"type": "text", "text": diagnosis},      # {{2}}
+                        {"type": "text", "text": location},       # {{3}}
+                        {"type": "text", "text": recommendation}  # {{4}}
+                    ]
+                }
+            ]
         },
     }
-    logging.info(
-        "WhatsApp 24h fallback template send to=%s template=%s lang=%s",
-        normalized_phone,
-        WHATSAPP_COLLISION_TEMPLATE_NAME,
-        WHATSAPP_TEMPLATE_LANGUAGE,
-    )
+    
+    logging.info("WhatsApp template send to=%s with params", normalized_phone)
     async with httpx.AsyncClient(timeout=20.0) as client_http:
         response = await client_http.post(endpoint, headers=headers, json=payload)
+    
     if response.status_code >= 400:
         logging.error("WhatsApp fallback template error (%s): %s", response.status_code, response.text)
         raise HTTPException(status_code=502, detail="Error enviando template de re-engagement")
+        
     response_data = response.json()
-    message_id = (
-        response_data.get("messages", [{}])[0].get("id")
-        if isinstance(response_data.get("messages"), list)
-        else None
-    )
+    message_id = response_data.get("messages", [{}])[0].get("id") if isinstance(response_data.get("messages"), list) else None
     if message_id:
         MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
     return message_id or "sent"
@@ -615,82 +625,68 @@ async def get_ai_diagnosis(data: AIDiagnosisRequest) -> AIDiagnosisResponse:
         api_key = os.getenv("EMERGENT_LLM_KEY")
         if not api_key:
             raise ValueError("EMERGENT_LLM_KEY no está configurada")
-
+          
         client = genai.Client(api_key=api_key)
-
         severity = classify_severity(data.g_force)
         lang = "Spanish" if data.language == "es" else "English"
 
+        # 1. Prompt mejorado: Eliminamos redundancia y clarificamos instrucciones
         prompt = f"""
-You are an emergency medical AI assistant for the C.R.A.S.H. system.
-Analyze motorcycle telemetry and return practical first-aid guidance in {lang}.
+        Eres un asistente de IA médico de emergencias para el sistema C.R.A.S.H.
+        Tu misión es analizar la telemetría de un accidente de motocicleta y generar instrucciones de primeros auxilios en {lang}.
+        
+        DATOS DEL IMPACTO:
+        - Fuerza G: {data.g_force}
+        - Aceleración: X:{data.acceleration_x}, Y:{data.acceleration_y}, Z:{data.acceleration_z}
+        - Giroscopio: X:{data.gyro_x}, Y:{data.gyro_y}, Z:{data.gyro_z}
+        
+        PERFIL MÉDICO:
+        - Sangre: {data.blood_type or 'Desconocido'}
+        - Alergias: {data.allergies or 'Ninguna'}
+        - Condiciones: {data.medical_conditions or 'Ninguna'}
+        
+        Severidad calculada por sensor: {severity}
+        """
 
-Return EXACT JSON:
-{{
-  "severity_assessment": "...",
-  "probable_injuries": ["..."],
-  "first_aid_steps": ["..."],
-  "warnings": ["..."],
-  "recommendation": "..."
-}}
-
-Impact data:
-- g_force={data.g_force}
-- acceleration=({data.acceleration_x}, {data.acceleration_y}, {data.acceleration_z})
-- gyroscope=({data.gyro_x}, {data.gyro_y}, {data.gyro_z})
-- blood_type={data.blood_type}
-- allergies={data.allergies}
-- medical_conditions={data.medical_conditions}
-- severity={severity}
-"""
+        # 2. Uso de Response Schema (La forma profesional de forzar JSON)
+        # Esto elimina la necesidad de re.search y json.loads manual
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model="models/gemini-1.5-flash",
             contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": AIDiagnosisResponse # Gemini ajustará su salida a tu modelo Pydantic
+            }
         )
-        response_text = response.text or ""
-        json_match = re.search(r"\{[\s\S]*\}", response_text)
-        if not json_match:
-            raise ValueError("No se encontró JSON válido en la respuesta")
-        diagnosis_data = json.loads(json_match.group())
-        return AIDiagnosisResponse(**diagnosis_data)
+
+        if not response.text:
+            raise ValueError("Respuesta vacía de la IA")
+
+        # 3. Validación directa
+        return AIDiagnosisResponse.model_validate_json(response.text)
+
     except Exception as exc:
         logging.error("AI diagnosis fallback: %s", exc)
+        
+        # Bloque de seguridad (Fallback) - Se mantiene tu lógica original corregida
         severity = classify_severity(data.g_force)
-        report_snapshot = (
-            f"G={data.g_force:.1f}, "
-            f"A=({data.acceleration_x:.2f},{data.acceleration_y:.2f},{data.acceleration_z:.2f}), "
-            f"Giro=({data.gyro_x:.2f},{data.gyro_y:.2f},{data.gyro_z:.2f})"
-        )
+        report_snapshot = f"G={data.g_force:.1f}, A=({data.acceleration_x:.1f},{data.acceleration_y:.1f})"
+        
         if data.language == "es":
             return AIDiagnosisResponse(
-                severity_assessment=(
-                    f"Impacto detectado del reporte: {report_snapshot}. "
-                    f"Clasificación automática: {severity}."
-                ),
-                probable_injuries=["Posible trauma craneal", "Contusiones", "Posibles fracturas"],
-                first_aid_steps=[
-                    "No mover a la víctima",
-                    "Llamar al 911",
-                    "No retirar el casco",
-                    "Verificar conciencia y respiración",
-                ],
-                warnings=["Riesgo de lesión cervical", "No administrar alimentos ni agua"],
-                recommendation="Asegure el área y espere servicios de emergencia.",
+                severity_assessment=f"Alerta de impacto: {report_snapshot}. Clasificación: {severity}.",
+                probable_injuries=["Trauma craneal potencial", "Contusiones múltiples"],
+                first_aid_steps=["No mover a la víctima", "Llamar al 911", "No retirar el casco"],
+                warnings=["Posible lesión de columna", "No dar agua ni comida"],
+                recommendation="Asegure el perímetro y espere ayuda profesional."
             )
+        
         return AIDiagnosisResponse(
-            severity_assessment=(
-                f"Impact detected from report: {report_snapshot}. "
-                f"Automatic severity classification: {severity}."
-            ),
-            probable_injuries=["Possible head trauma", "Contusions", "Possible fractures"],
-            first_aid_steps=[
-                "Do not move the victim",
-                "Call 911",
-                "Do not remove the helmet",
-                "Check consciousness and breathing",
-            ],
-            warnings=["Potential spinal injury", "Do not provide food or liquids"],
-            recommendation="Secure scene and wait for emergency responders.",
+            severity_assessment=f"Impact Alert: {report_snapshot}. Classification: {severity}.",
+            probable_injuries=["Potential head trauma", "Multiple contusions"],
+            first_aid_steps=["Do not move the victim", "Call 911", "Do not remove the helmet"],
+            warnings=["Potential spinal injury", "Do not give food or water"],
+            recommendation="Secure the area and wait for emergency responders."
         )
 
 
