@@ -43,13 +43,14 @@ WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN").strip()
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN").strip()
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID").strip()
 WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION").strip()
-WHATSAPP_TEMPLATE_NAME = os.getenv("WHATSAPP_TEMPLATE_NAME").strip()
-WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE").strip()
-WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H").strip().lower() in {
+WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").strip().lower() in {
     "1",
     "true",
     "yes",
 }
+WHATSAPP_OTP_TEMPLATE_NAME = os.getenv("WHATSAPP_OTP_TEMPLATE_NAME")
+WHATSAPP_COLLISION_TEMPLATE_NAME = os.getenv("WHATSAPP_COLLISION_TEMPLATE_NAME")
+WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE")
 FALLBACK_REENGAGEMENT_IDS: set[str] = set()
 MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
 
@@ -61,6 +62,7 @@ class User(BaseModel):
     email: EmailStr
     password_hash: Optional[str] = None
     full_name: Optional[str] = None
+    phone_number: Optional[str] = None
     auth_provider: str = "password"
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -69,12 +71,14 @@ class UserPublic(BaseModel):
     id: str
     email: EmailStr
     full_name: Optional[str] = None
+    phone_number: Optional[str] = None
     auth_provider: str
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8)
+    phone_number: str = Field(min_length=10, max_length=20)
     full_name: Optional[str] = None
 
 
@@ -255,6 +259,20 @@ def classify_severity(g_force: float) -> str:
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+def validate_password_strength(password: str) -> None:
+    has_upper = any(char.isupper() for char in password)
+    has_lower = any(char.islower() for char in password)
+    has_digit = any(char.isdigit() for char in password)
+    has_special = bool(re.search(r"[^A-Za-z0-9]", password))
+    if len(password) < 8 or not (has_upper and has_lower and has_digit and has_special):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "La contraseña debe tener al menos 8 caracteres e incluir mayúscula, minúscula, "
+                "número y caracter especial."
+            ),
+        )
+
 
 def verify_password(plain_password: str, password_hash: str) -> bool:
     return pwd_context.verify(plain_password, password_hash)
@@ -366,7 +384,7 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
         WHATSAPP_PHONE_NUMBER_ID,
         normalized_phone,
         WHATSAPP_API_VERSION,
-        WHATSAPP_TEMPLATE_NAME or "none",
+        WHATSAPP_COLLISION_TEMPLATE_NAME,
     )
 
     payload = {
@@ -420,9 +438,6 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         raise ValueError(
             "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
         )
-    if not WHATSAPP_TEMPLATE_NAME:
-        raise ValueError("WHATSAPP_TEMPLATE_NAME no está configurado para fallback de 24h.")
-
     normalized_phone = normalize_phone_number(to_phone)
     endpoint = (
         f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
@@ -437,14 +452,14 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         "to": normalized_phone,
         "type": "template",
         "template": {
-            "name": WHATSAPP_TEMPLATE_NAME,
+            "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
             "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
         },
     }
     logging.info(
         "WhatsApp 24h fallback template send to=%s template=%s lang=%s",
         normalized_phone,
-        WHATSAPP_TEMPLATE_NAME,
+        WHATSAPP_COLLISION_TEMPLATE_NAME,
         WHATSAPP_TEMPLATE_LANGUAGE,
     )
     async with httpx.AsyncClient(timeout=20.0) as client_http:
@@ -461,6 +476,47 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
     if message_id:
         MESSAGE_ID_TO_PHONE[message_id] = normalized_phone
     return message_id or "sent"
+
+
+async def send_otp_template_message(to_phone: str) -> str:
+    if not is_whatsapp_ready():
+        raise ValueError(
+            "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
+        )
+
+    normalized_phone = normalize_phone_number(to_phone)
+    endpoint = (
+        f"https://graph.facebook.com/{WHATSAPP_API_VERSION}/"
+        f"{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    )
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "messaging_product": "whatsapp",
+        "to": normalized_phone,
+        "type": "template",
+        "template": {
+            "name": WHATSAPP_OTP_TEMPLATE_NAME,
+            "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+        },
+    }
+    async with httpx.AsyncClient(timeout=20.0) as client_http:
+        response = await client_http.post(endpoint, headers=headers, json=payload)
+
+    if response.status_code >= 400:
+        error = parse_whatsapp_error(response)
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "WHATSAPP_OTP_TEMPLATE_ERROR",
+                "message": "No se pudo enviar la plantilla de OTP de WhatsApp",
+                "provider_status": response.status_code,
+                "provider_error": error,
+            },
+        )
+    return "sent"
 
 
 async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
@@ -487,7 +543,7 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
                 status="failed:whatsapp_not_configured",
             )
         try:
-            message_id = await send_whatsapp_cloud_message(contact.phone, message)
+            message_id = await send_whatsapp_template_message(contact.phone)
             return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
         except HTTPException as exc:
             logging.error(
@@ -643,6 +699,7 @@ def to_public_user(user: User) -> UserPublic:
         id=user.id,
         email=user.email,
         full_name=user.full_name,
+        phone_number=user.phone_number,
         auth_provider=user.auth_provider,
     )
 
@@ -680,14 +737,26 @@ async def register(payload: RegisterRequest) -> AuthResponse:
     existing = await db.users.find_one({"email": payload.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
+    validate_password_strength(payload.password)
+    normalized_phone = normalize_phone_number(payload.phone_number)
+    if len(normalized_phone) < 10:
+        raise HTTPException(status_code=400, detail="Número telefónico inválido")
+    existing_phone = await db.users.find_one({"phone_number": normalized_phone})
+    if existing_phone:
+        raise HTTPException(status_code=400, detail="Phone number already registered")
 
     user = User(
         email=payload.email.lower(),
         full_name=payload.full_name,
+        phone_number=normalized_phone,
         auth_provider="password",
         password_hash=hash_password(payload.password),
     )
     await db.users.insert_one(user.model_dump())
+    try:
+        await send_otp_template_message(normalized_phone)
+    except Exception as exc:  # noqa: BLE001
+        logging.warning("OTP template could not be sent to %s: %s", normalized_phone, exc)
     token = create_access_token(user.id)
     return AuthResponse(access_token=token, user=to_public_user(user))
 
@@ -860,7 +929,9 @@ async def whatsapp_debug_info(current_user: User = Depends(get_current_user)) ->
         "has_access_token": bool(WHATSAPP_ACCESS_TOKEN),
         "has_phone_number_id": bool(WHATSAPP_PHONE_NUMBER_ID),
         "whatsapp_api_version": WHATSAPP_API_VERSION,
-        "whatsapp_template_name": WHATSAPP_TEMPLATE_NAME or None,
+        "whatsapp_template_name": WHATSAPP_COLLISION_TEMPLATE_NAME,
+        "whatsapp_otp_template_name": WHATSAPP_OTP_TEMPLATE_NAME,
+        "whatsapp_collision_template_name": WHATSAPP_COLLISION_TEMPLATE_NAME,
         "whatsapp_template_language": WHATSAPP_TEMPLATE_LANGUAGE,
         "whatsapp_template_fallback_on_24h": WHATSAPP_TEMPLATE_FALLBACK_ON_24H,
         "message_type": settings.message_type,
@@ -940,7 +1011,6 @@ async def receive_whatsapp_webhook(payload: Dict[str, Any]) -> Dict[str, str]:
                         is_reengagement_failure
                         and original_phone
                         and WHATSAPP_TEMPLATE_FALLBACK_ON_24H
-                        and WHATSAPP_TEMPLATE_NAME
                         and status_id not in FALLBACK_REENGAGEMENT_IDS
                     ):
                         FALLBACK_REENGAGEMENT_IDS.add(status_id)
