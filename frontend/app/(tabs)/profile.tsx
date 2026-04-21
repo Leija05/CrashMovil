@@ -33,6 +33,8 @@ export default function ProfileScreen() {
 
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [authPhone, setAuthPhone] = useState('');
   const [authName, setAuthName] = useState('');
   const [isRegisterMode, setIsRegisterMode] = useState(false);
 
@@ -46,6 +48,8 @@ export default function ProfileScreen() {
       email: settings.language === 'es' ? 'Correo electrónico' : 'Email',
       password: settings.language === 'es' ? 'Contraseña' : 'Password',
       registerName: settings.language === 'es' ? 'Nombre completo' : 'Full name',
+      phone: settings.language === 'es' ? 'Número WhatsApp (+52...)' : 'WhatsApp number (+52...)',
+      confirmPassword: settings.language === 'es' ? 'Confirmar contraseña' : 'Confirm password',
       authHint:
         settings.language === 'es'
           ? 'Inicia sesión para ver y editar tu perfil médico.'
@@ -123,6 +127,37 @@ export default function ProfileScreen() {
       return;
     }
 
+    if (isRegisterMode) {
+      const strengthRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{8,}$/;
+      if (!authPhone.trim()) {
+        Alert.alert(
+          settings.language === 'es' ? 'Datos incompletos' : 'Missing data',
+          settings.language === 'es'
+            ? 'El número de WhatsApp es obligatorio para registro.'
+            : 'WhatsApp number is required for registration.',
+        );
+        return;
+      }
+      if (authPassword !== confirmPassword) {
+        Alert.alert(
+          settings.language === 'es' ? 'Contraseñas no coinciden' : 'Passwords do not match',
+          settings.language === 'es'
+            ? 'Debes escribir la misma contraseña en ambos campos.'
+            : 'You must type the same password in both fields.',
+        );
+        return;
+      }
+      if (!strengthRegex.test(authPassword)) {
+        Alert.alert(
+          settings.language === 'es' ? 'Contraseña insegura' : 'Weak password',
+          settings.language === 'es'
+            ? 'Incluye mínimo 8 caracteres con mayúscula, minúscula, número y símbolo.'
+            : 'Use at least 8 chars with uppercase, lowercase, number, and symbol.',
+        );
+        return;
+      }
+    }
+
     setAuthLoading(true);
     try {
       const payload = {
@@ -131,7 +166,11 @@ export default function ProfileScreen() {
       };
 
       const response = isRegisterMode
-        ? await authApi.register({ ...payload, full_name: authName.trim() })
+        ? await authApi.register({
+            ...payload,
+            full_name: authName.trim(),
+            phone_number: authPhone.trim(),
+          })
         : await authApi.login(payload);
 
       const token = response.data.access_token;
@@ -141,6 +180,7 @@ export default function ProfileScreen() {
       setAuthToken(token);
       setAuthSession(token, loggedUser);
       setAuthPassword('');
+      setConfirmPassword('');
 
       await loadProfile();
     } catch (error) {
@@ -215,13 +255,23 @@ export default function ProfileScreen() {
               <Text style={styles.subtitle}>{screenTexts.authHint}</Text>
 
               {isRegisterMode && (
-                <TextInput
-                  style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
-                  value={authName}
-                  onChangeText={setAuthName}
-                  placeholder={screenTexts.registerName}
-                  placeholderTextColor="#888"
-                />
+                <>
+                  <TextInput
+                    style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
+                    value={authName}
+                    onChangeText={setAuthName}
+                    placeholder={screenTexts.registerName}
+                    placeholderTextColor="#888"
+                  />
+                  <TextInput
+                    style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
+                    value={authPhone}
+                    onChangeText={setAuthPhone}
+                    placeholder={screenTexts.phone}
+                    placeholderTextColor="#888"
+                    keyboardType="phone-pad"
+                  />
+                </>
               )}
 
               <TextInput
@@ -241,6 +291,16 @@ export default function ProfileScreen() {
                 placeholderTextColor="#888"
                 secureTextEntry
               />
+              {isRegisterMode && (
+                <TextInput
+                  style={[styles.input, isDark ? styles.inputDark : styles.inputLight]}
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder={screenTexts.confirmPassword}
+                  placeholderTextColor="#888"
+                  secureTextEntry
+                />
+              )}
 
               <TouchableOpacity
                 style={[styles.saveButton, authLoading && styles.saveButtonDisabled]}

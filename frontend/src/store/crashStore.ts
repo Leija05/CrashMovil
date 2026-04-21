@@ -52,6 +52,7 @@ export interface UserProfile {
 export interface AuthUser {
   id: string;
   email: string;
+  phone_number?: string;
   full_name?: string;
   auth_provider: 'password' | 'google' | 'apple';
 }

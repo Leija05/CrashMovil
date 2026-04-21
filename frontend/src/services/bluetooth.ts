@@ -87,6 +87,20 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   }
 };
 
+const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => void) => {
+  let pending = '';
+  return (chunk: string) => {
+    if (!chunk) return;
+    pending = `${pending}${chunk}`.replace(/\r/g, '');
+    const lines = pending.split('\n');
+    pending = lines.pop() ?? '';
+    for (const line of lines) {
+      const telemetry = parseTelemetry(line);
+      if (telemetry) onTelemetry(telemetry);
+    }
+  };
+};
+
 class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private connectedDevice: Device | null = null;
@@ -159,6 +173,7 @@ class BluetoothTelemetryService {
     try {
       this.connectedDevice = await manager.connectToDevice(matchedDevice.id, { timeout: 10000 });
       await this.connectedDevice.discoverAllServicesAndCharacteristics();
+      const streamParser = createTelemetryStreamParser(onTelemetry);
 
       const services = await this.connectedDevice.services();
       const service = services.find((s) => DEFAULT_SERVICE_UUIDS.includes(s.uuid.slice(-4).toUpperCase()));
@@ -177,8 +192,7 @@ class BluetoothTelemetryService {
         (error, updated) => {
           if (error || !updated?.value) return;
           const rawPayload = decodeBase64(updated.value);
-          const telemetry = parseTelemetry(rawPayload);
-          if (telemetry) onTelemetry(telemetry);
+          streamParser(rawPayload);
         }
       );
     } catch (error) {

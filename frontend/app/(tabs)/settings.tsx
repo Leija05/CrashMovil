@@ -10,9 +10,13 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
+  ToastAndroid,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useTranslation } from 'react-i18next';
 import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
@@ -32,6 +36,11 @@ export default function SettingsScreen() {
   const [deviceName, setDeviceName] = useState(settings.device_name);
   const [isScanning, setIsScanning] = useState(false);
   const [detectedName, setDetectedName] = useState<string | null>(null);
+  const toast = (message: string) => {
+    Haptics.selectionAsync().catch(() => undefined);
+    if (Platform.OS === 'android') ToastAndroid.show(message, ToastAndroid.SHORT);
+    else Alert.alert('CRASH Safety', message);
+  };
 
   useEffect(() => {
     if (settings.message_type !== 'whatsapp' || settings.sms_enabled) {
@@ -114,6 +123,7 @@ export default function SettingsScreen() {
           ? `Se detectó ${match.name}. La app quedará en escucha pasiva de telemetría.`
           : `${match.name} detected. App will stay in passive telemetry listening mode.`
       );
+      toast(settings.language === 'es' ? 'Telemetría BLE conectada' : 'BLE telemetry connected');
     } catch (error) {
       console.error('Bluetooth detection error:', error);
       Alert.alert(
@@ -132,10 +142,14 @@ export default function SettingsScreen() {
 
   return (
     <SafeAreaView style={[styles.container, isDark ? styles.containerDark : styles.containerLight]}>
+      <LinearGradient
+        colors={isDark ? ['#050505', '#06122A'] : ['#F7FAFF', '#DEE9FF']}
+        style={StyleSheet.absoluteFill}
+      />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <Text style={[styles.title, isDark ? styles.textDark : styles.textLight]}>{t('deviceSettings')}</Text>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.sectionHeaderCompact}>
             <View>
               <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>{t('deviceName')}</Text>
@@ -159,9 +173,9 @@ export default function SettingsScreen() {
               <Ionicons name="checkmark" size={20} color="#001017" />
             </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
               {settings.language === 'es' ? 'Detección pasiva Bluetooth LE' : 'Passive Bluetooth LE detection'}
@@ -186,9 +200,9 @@ export default function SettingsScreen() {
               {settings.language === 'es' ? 'Detectado:' : 'Detected:'} {detectedName}
             </Text>
           )}
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>{t('impactThreshold')}</Text>
             <Text style={styles.valueText}>{settings.impact_threshold.toFixed(1)}G</Text>
@@ -204,9 +218,9 @@ export default function SettingsScreen() {
             maximumTrackTintColor="#1e293b"
             thumbTintColor="#00d9ff"
           />
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>
               {settings.language === 'es' ? 'Tiempo para cancelar alerta' : 'Alert cancellation timer'}
@@ -229,9 +243,9 @@ export default function SettingsScreen() {
               ? 'Entre más alto el valor, más tiempo para cancelar falsa alarma.'
               : 'Higher values give more time to cancel false alarms.'}
           </Text>
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <View style={styles.toggleRow}>
             <View>
               <Text style={[styles.toggleLabel, isDark ? styles.textDark : styles.textLight]}>{t('autoCall')}</Text>
@@ -257,9 +271,9 @@ export default function SettingsScreen() {
               thumbColor="#fff"
             />
           </View>
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>{t('language')}</Text>
           <View style={styles.optionRow}>
             <TouchableOpacity
@@ -275,9 +289,9 @@ export default function SettingsScreen() {
               <Text style={settings.language === 'en' ? styles.optionTextActive : undefined}>English</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
 
-        <View style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
+        <BlurView intensity={15} tint={isDark ? 'dark' : 'light'} style={[styles.section, isDark ? styles.sectionDark : styles.sectionLight]}>
           <Text style={[styles.sectionTitle, isDark ? styles.textDark : styles.textLight]}>{t('theme')}</Text>
           <View style={styles.optionRow}>
             <TouchableOpacity
@@ -293,7 +307,7 @@ export default function SettingsScreen() {
               <Text style={settings.theme === 'light' ? styles.optionTextActive : undefined}>{t('light')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </BlurView>
       </ScrollView>
     </SafeAreaView>
   );
@@ -301,15 +315,15 @@ export default function SettingsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  containerDark: { backgroundColor: '#020617' },
-  containerLight: { backgroundColor: '#f1f5f9' },
+  containerDark: { backgroundColor: '#050505' },
+  containerLight: { backgroundColor: '#f3f5fa' },
   scrollContent: { padding: 20, paddingBottom: 90 },
   title: { fontSize: 30, fontWeight: '800', marginBottom: 16 },
   textDark: { color: '#fff' },
   textLight: { color: '#0f172a' },
   section: { borderRadius: 18, padding: 16, marginBottom: 14, borderWidth: 1 },
-  sectionDark: { backgroundColor: '#0b1220', borderColor: '#1e293b' },
-  sectionLight: { backgroundColor: '#fff', borderColor: '#e2e8f0' },
+  sectionDark: { backgroundColor: 'rgba(12,16,28,0.72)', borderColor: 'rgba(255,255,255,0.15)', overflow: 'hidden' },
+  sectionLight: { backgroundColor: 'rgba(255,255,255,0.78)', borderColor: 'rgba(15,23,42,0.18)', overflow: 'hidden' },
   sectionTitle: { fontSize: 17, fontWeight: '700', marginBottom: 8 },
   sectionSubtitle: { color: '#94a3b8', marginBottom: 12, fontSize: 13, lineHeight: 18 },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
