@@ -66,32 +66,48 @@ const normalizeDevice = (device: Device): ScanDevice | null => {
   };
 };
 
-const parseTelemetry = (payload: string): TelemetryData | null => {
+interface ParsedTelemetryEnvelope {
+  telemetry: TelemetryData | null;
+  eventType: string | null;
+}
+
+const parseTelemetry = (payload: string): ParsedTelemetryEnvelope => {
   const cleanedPayload = payload.trim();
-  if (!cleanedPayload) return null;
+  if (!cleanedPayload) return { telemetry: null, eventType: null };
 
   try {
     const parsed = JSON.parse(cleanedPayload);
-    return {
-      acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
-      acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
-      acceleration_z: Number(parsed.acceleration_z ?? parsed.az ?? 0),
-      gyro_x: Number(parsed.gyro_x ?? parsed.gx ?? 0),
-      gyro_y: Number(parsed.gyro_y ?? parsed.gy ?? 0),
-      gyro_z: Number(parsed.gyro_z ?? parsed.gz ?? 0),
+    const accArray = Array.isArray(parsed.acc) ? parsed.acc : [];
+    const gyroArray = Array.isArray(parsed.gyro) ? parsed.gyro : [];
+    const telemetry = {
+      acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? accArray[0] ?? 0),
+      acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? accArray[1] ?? 0),
+      acceleration_z: Number(parsed.acceleration_z ?? parsed.az ?? accArray[2] ?? 0),
+      gyro_x: Number(parsed.gyro_x ?? parsed.gx ?? gyroArray[0] ?? 0),
+      gyro_y: Number(parsed.gyro_y ?? parsed.gy ?? gyroArray[1] ?? 0),
+      gyro_z: Number(parsed.gyro_z ?? parsed.gz ?? gyroArray[2] ?? 0),
       g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
+    };
+    return {
+      telemetry,
+      eventType: typeof parsed.type === 'string' ? parsed.type.trim().toUpperCase() : null,
     };
   } catch {
     const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
-    if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) return null;
+    if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) {
+      return { telemetry: null, eventType: null };
+    }
     return {
-      acceleration_x: parts[0],
-      acceleration_y: parts[1],
-      acceleration_z: parts[2],
-      gyro_x: parts[3],
-      gyro_y: parts[4],
-      gyro_z: parts[5],
-      g_force: parts[6],
+      telemetry: {
+        acceleration_x: parts[0],
+        acceleration_y: parts[1],
+        acceleration_z: parts[2],
+        gyro_x: parts[3],
+        gyro_y: parts[4],
+        gyro_z: parts[5],
+        g_force: parts[6],
+      },
+      eventType: null,
     };
   }
 };
@@ -145,9 +161,18 @@ const createTelemetryStreamParser = (
       return;
     }
 
-    const telemetry = parseTelemetry(line);
+    const { telemetry, eventType } = parseTelemetry(line);
     if (telemetry) {
       dispatchTelemetry(telemetry);
+
+      if (eventType === 'CRASH' || eventType === 'FREEFALL') {
+        callbacks?.onCrashSignal?.(telemetry.g_force);
+      }
+      if (eventType === 'IDLE') {
+        callbacks?.onHeartbeat?.();
+        return;
+      }
+
       callbacks?.onHeartbeat?.();
       return;
     }
