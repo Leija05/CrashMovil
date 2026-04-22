@@ -458,7 +458,7 @@ async def send_whatsapp_cloud_message(to_phone: str, message: str) -> str:
     return message_id or "sent"
 
 
-async def send_whatsapp_template_message(to_phone: str) -> str:
+async def send_whatsapp_template_message(to_phone: str, template_params: Optional[List[str]] = None) -> str:
     if not is_whatsapp_ready():
         raise ValueError(
             "WhatsApp Cloud API no está configurada. Define WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID."
@@ -472,6 +472,10 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
+    params = (template_params or [])[:4]
+    while len(params) < 4:
+        params.append("N/A")
+
     payload = {
         "messaging_product": "whatsapp",
         "to": normalized_phone,
@@ -479,6 +483,12 @@ async def send_whatsapp_template_message(to_phone: str) -> str:
         "template": {
             "name": WHATSAPP_COLLISION_TEMPLATE_NAME,
             "language": {"code": WHATSAPP_TEMPLATE_LANGUAGE},
+            "components": [
+                {
+                    "type": "body",
+                    "parameters": [{"type": "text", "text": value} for value in params],
+                }
+            ],
         },
     }
     logging.info(
@@ -544,6 +554,21 @@ async def send_otp_template_message(to_phone: str) -> str:
     return "sent"
 
 
+def build_whatsapp_template_params(message: str) -> List[str]:
+    lines = [line.strip() for line in message.splitlines() if line.strip()]
+    values: List[str] = []
+
+    severity = next((line.split(":", 1)[1].strip() for line in lines if line.lower().startswith("severidad:")), "ALTA")
+    diagnosis = next((line.split(":", 1)[1].strip() for line in lines if line.lower().startswith("diagnóstico ia:")), "Impacto detectado")
+    recommendation = next((line.split(":", 1)[1].strip() for line in lines if line.lower().startswith("recomendación:")), "Solicita ayuda de emergencia")
+    location = next((line.split(":", 1)[1].strip() for line in lines if line.lower().startswith("ubicación:")), "Ubicación no disponible")
+
+    values.extend([severity, diagnosis, recommendation, location])
+    return values
+
+
+
+
 async def send_contact_alert(contact: EmergencyContact, message: str, channel: str) -> AlertDispatchResult:
     provider = integration_provider()
     logging.info(
@@ -568,7 +593,7 @@ async def send_contact_alert(contact: EmergencyContact, message: str, channel: s
                 status="failed:whatsapp_not_configured",
             )
         try:
-            message_id = await send_whatsapp_template_message(contact.phone)
+            message_id = await send_whatsapp_template_message(contact.phone, build_whatsapp_template_params(message))
             return AlertDispatchResult(contact_id=contact.id, channel=channel, status=f"sent:{message_id}")
         except HTTPException as exc:
             logging.error(
@@ -1009,7 +1034,7 @@ async def send_whatsapp_template_to_emergency_contact(
         raise HTTPException(status_code=404, detail="No emergency contact found for template test")
 
     contact = EmergencyContact(**sanitize_doc(contact_doc))
-    message_id = await send_whatsapp_template_message(contact.phone)
+    message_id = await send_whatsapp_template_message(contact.phone, build_whatsapp_template_params(message))
     return {"status": "sent", "message_id": message_id, "contact_phone": contact.phone}
 
 
