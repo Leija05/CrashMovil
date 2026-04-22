@@ -38,24 +38,38 @@ api_router = APIRouter(prefix="/api")
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
-JWT_SECRET = os.getenv("JWT_SECRET")
-JWT_ALGORITHM = os.getenv("JWT_ALGORITHM")
-JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES"))
-WEBHOOK_VERIFY_TOKEN = os.getenv("WEBHOOK_VERIFY_TOKEN").strip()
-WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN").strip()
-WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID").strip()
-WHATSAPP_API_VERSION = os.getenv("WHATSAPP_API_VERSION").strip()
+JWT_SECRET = get_required_env("JWT_SECRET")
+JWT_ALGORITHM = get_env("JWT_ALGORITHM", "HS256") or "HS256"
+JWT_EXPIRE_MINUTES = int(get_env("JWT_EXPIRE_MINUTES", "60") or "60")
+WEBHOOK_VERIFY_TOKEN = get_env("WEBHOOK_VERIFY_TOKEN", "") or ""
+WHATSAPP_ACCESS_TOKEN = get_env("WHATSAPP_ACCESS_TOKEN", "") or ""
+WHATSAPP_PHONE_NUMBER_ID = get_env("WHATSAPP_PHONE_NUMBER_ID", "") or ""
+WHATSAPP_API_VERSION = get_env("WHATSAPP_API_VERSION", "v20.0") or "v20.0"
 WHATSAPP_TEMPLATE_FALLBACK_ON_24H = os.getenv("WHATSAPP_TEMPLATE_FALLBACK_ON_24H", "true").strip().lower() in {
     "1",
     "true",
     "yes",
 }
-WHATSAPP_OTP_TEMPLATE_NAME = os.getenv("WHATSAPP_OTP_TEMPLATE_NAME")
-WHATSAPP_COLLISION_TEMPLATE_NAME = os.getenv("WHATSAPP_COLLISION_TEMPLATE_NAME")
-WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE")
+WHATSAPP_OTP_TEMPLATE_NAME = get_env("WHATSAPP_OTP_TEMPLATE_NAME")
+WHATSAPP_COLLISION_TEMPLATE_NAME = get_env("WHATSAPP_COLLISION_TEMPLATE_NAME")
+WHATSAPP_TEMPLATE_LANGUAGE = get_env("WHATSAPP_TEMPLATE_LANGUAGE")
 FALLBACK_REENGAGEMENT_IDS: set[str] = set()
 MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
 APP_LOGGER = logging.getLogger("uvicorn.error")
+
+
+def get_env(name: str, default: Optional[str] = None, *, strip: bool = True) -> Optional[str]:
+    value = os.getenv(name, default)
+    if value is None:
+        return None
+    return value.strip() if strip else value
+
+
+def get_required_env(name: str) -> str:
+    value = get_env(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
 
 # ==================== MODELS ====================
 
@@ -299,12 +313,12 @@ def create_access_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
     payload = {"sub": user_id, "exp": expire, "iat": datetime.now(timezone.utc)}
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    APP_LOGGER.info("JWT issued user_id=%s token=%s", user_id, token)
+    APP_LOGGER.info("JWT issued user_id=%s", user_id)
     return token
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-    APP_LOGGER.info("Auth token received token=%s", token)
+    APP_LOGGER.info("Auth token received")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
@@ -748,6 +762,8 @@ def get_developer_credentials() -> Dict[str, Optional[str]]:
 
 @app.on_event("startup")
 async def startup_db_client() -> None:
+    if JWT_EXPIRE_MINUTES <= 0:
+        raise RuntimeError("JWT_EXPIRE_MINUTES must be greater than zero")
     await client.admin.command("ping")
     logging.info("MongoDB ready")
 
@@ -887,7 +903,7 @@ async def create_contact(
         **contact.model_dump(),
     )
     await db.emergency_contacts.insert_one(contact_obj.model_dump())
-    logging.info("Opt-in invite generated for %s token=%s", contact_obj.phone, token)
+    logging.info("Opt-in invite generated for %s", contact_obj.phone)
     try:
         verification_message = f"Hola, Aquí esta el TOKEN de VERIFICACION para CRASH: {token}"
         await send_whatsapp_cloud_message(contact_obj.phone, verification_message)
@@ -1335,14 +1351,11 @@ app.add_middleware(
 @app.middleware("http")
 async def log_http_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
     started_at = time.perf_counter()
-    auth_header = request.headers.get("authorization", "")
-    bearer_token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
     APP_LOGGER.info(
-        "HTTP request start method=%s path=%s query=%s bearer_token=%s",
+        "HTTP request start method=%s path=%s query=%s",
         request.method,
         request.url.path,
         request.url.query,
-        bearer_token or "<none>",
     )
     response = await call_next(request)
     elapsed_ms = (time.perf_counter() - started_at) * 1000

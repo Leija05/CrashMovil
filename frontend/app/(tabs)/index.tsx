@@ -148,7 +148,7 @@ export default function HomeScreen() {
     const currentT = telemetryRef.current;
     const currentS = settingsRef.current;
 
-    if (!isConnected || currentT.g_force < currentS.impact_threshold || !user) return;
+    if (!isConnectedRef.current || currentT.g_force < currentS.impact_threshold || !user) return;
     const now = Date.now();
     if (now - lastImpactAt.current < IMPACT_COOLDOWN_MS) return;
     lastImpactAt.current = now;
@@ -175,7 +175,7 @@ export default function HomeScreen() {
       alerts_dispatched: 0,
     });
     setEmergencyActive(true);
-  }, [currentLocation?.latitude, currentLocation?.longitude, isConnected, setCurrentImpact, setEmergencyActive, user]);
+  }, [currentLocation?.latitude, currentLocation?.longitude, setCurrentImpact, setEmergencyActive, user]);
 
   useEffect(() => {
     Animated.timing(heroAnim, { toValue: 1, duration: 550, useNativeDriver: true }).start();
@@ -206,6 +206,7 @@ export default function HomeScreen() {
 
     return () => {
       clearInterval(timer);
+      bluetoothTelemetryService.stopPassiveTelemetryListener();
     };
   }, [heroAnim, setCurrentLocation, startBluetooth]);
 
