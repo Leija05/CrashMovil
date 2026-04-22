@@ -28,7 +28,7 @@ import { TelemetryChart } from '../../src/components/TelemetryChart';
 import { useCrashStore } from '../../src/store/crashStore';
 
 const IMPACT_COOLDOWN_MS = 12000;
-const SENSOR_TIMEOUT_MS = 7000;
+const HEARTBEAT_TIMEOUT_MS = 7000;
 const HIGH_FORCE_ALERT_COOLDOWN_MS = 8000;
 
 const notify = (message: string) => {
@@ -68,7 +68,7 @@ export default function HomeScreen() {
   const [sensorOffline, setSensorOffline] = useState(false);
   const [impactAlert, setImpactAlert] = useState(false);
 
-  const lastTelemetryAt = useRef(Date.now());
+  const lastSignalAt = useRef(Date.now());
   const lastImpactAt = useRef(0);
   const lastHighForceAlertAt = useRef(0);
   const heroAnim = useRef(new Animated.Value(0)).current;
@@ -135,11 +135,25 @@ export default function HomeScreen() {
         }
       },
       (incomingTelemetry) => {
-        lastTelemetryAt.current = Date.now();
+        lastSignalAt.current = Date.now();
         setSensorOffline(false);
         setTelemetry(incomingTelemetry);
         setHistory((prev) => [...prev.slice(-59), incomingTelemetry.g_force]);
       },
+      {
+        onHeartbeat: () => {
+          lastSignalAt.current = Date.now();
+          setSensorOffline(false);
+        },
+        onCrashSignal: (gForce) => {
+          if (!Number.isFinite(gForce ?? Number.NaN)) return;
+          const safeForce = gForce as number;
+          const currentTelemetry = telemetryRef.current;
+          const crashTelemetry = { ...currentTelemetry, g_force: safeForce };
+          setTelemetry(crashTelemetry);
+          setHistory((prev) => [...prev.slice(-59), safeForce]);
+        },
+      }
     );
   }, [setConnected, setConnectedDeviceName, setTelemetry]);
 
@@ -183,8 +197,8 @@ export default function HomeScreen() {
 
     const timer = setInterval(() => {
       const now = Date.now();
-      // Aumentamos el margen a 5000ms para compensar la latencia del HC-05
-      const timedOut = now - lastTelemetryAt.current > SENSOR_TIMEOUT_MS;
+      // Heartbeat timeout de 7s para detectar desconexión silenciosa del casco.
+      const timedOut = now - lastSignalAt.current > HEARTBEAT_TIMEOUT_MS;
 
       if (timedOut && !sensorOfflineRef.current) {
         setSensorOffline(true);

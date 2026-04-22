@@ -12,6 +12,12 @@ export interface ScanDevice {
   name: string;
 }
 
+export interface BluetoothStreamCallbacks {
+  onHeartbeat?: () => void;
+  onCrashSignal?: (gForce: number | null) => void;
+  onUnknownLine?: (line: string) => void;
+}
+
 const DEFAULT_MODULE_NAMES = ['HM-10', 'HM10', 'HC-05', 'HC05', 'CRASH'];
 const DEFAULT_SERVICE_UUIDS = ['FFE0', '180F'];
 const DEFAULT_CHARACTERISTIC_UUIDS = ['FFE1', '2A19'];
@@ -90,18 +96,74 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   }
 };
 
-const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => void) => {
+const createTelemetryStreamParser = (
+  onTelemetry: (telemetry: TelemetryData) => void,
+  callbacks?: BluetoothStreamCallbacks
+) => {
   let pending = '';
+  let lastTelemetry: TelemetryData = {
+    acceleration_x: 0,
+    acceleration_y: 0,
+    acceleration_z: 1,
+    gyro_x: 0,
+    gyro_y: 0,
+    gyro_z: 0,
+    g_force: 1,
+  };
+
+  const dispatchTelemetry = (telemetry: TelemetryData) => {
+    lastTelemetry = telemetry;
+    onTelemetry(telemetry);
+  };
+
+  const parseLine = (rawLine: string) => {
+    const line = rawLine.trim();
+    if (!line) return;
+
+    const [rawType, rawValue] = line.split(':', 2);
+    const type = rawType?.trim().toUpperCase();
+    const numericValue = rawValue !== undefined ? Number.parseFloat(rawValue.trim()) : Number.NaN;
+
+    if (type === 'OK') {
+      callbacks?.onHeartbeat?.();
+      return;
+    }
+
+    if (type === 'MOV' && Number.isFinite(numericValue)) {
+      dispatchTelemetry({ ...lastTelemetry, g_force: numericValue });
+      callbacks?.onHeartbeat?.();
+      return;
+    }
+
+    if (type === 'CRASH') {
+      const crashValue = Number.isFinite(numericValue) ? numericValue : null;
+      if (crashValue !== null) {
+        dispatchTelemetry({ ...lastTelemetry, g_force: crashValue });
+      }
+      callbacks?.onCrashSignal?.(crashValue);
+      callbacks?.onHeartbeat?.();
+      return;
+    }
+
+    const telemetry = parseTelemetry(line);
+    if (telemetry) {
+      dispatchTelemetry(telemetry);
+      callbacks?.onHeartbeat?.();
+      return;
+    }
+
+    callbacks?.onUnknownLine?.(line);
+  };
+
   return (chunk: string) => {
     if (!chunk) return;
-    // Eliminamos caracteres nulos que el HC-05 suele enviar por ruido
-    pending = `${pending}${chunk}`.replace(/\0/g, '').replace(/\r/g, ''); 
+    // Eliminamos caracteres nulos que el HC-05 suele enviar por ruido.
+    pending = `${pending}${chunk}`.replace(/\0/g, '').replace(/\r/g, '');
     const lines = pending.split('\n');
     pending = lines.pop() ?? '';
-    
+
     for (const line of lines) {
-      const telemetry = parseTelemetry(line);
-      if (telemetry) onTelemetry(telemetry);
+      parseLine(line);
     }
   };
 };
@@ -159,7 +221,8 @@ class BluetoothTelemetryService {
   private async establishConnection(
     deviceId: string, 
     onTelemetry: (telemetry: TelemetryData) => void,
-    onDeviceDetected: (device: ScanDevice | null) => void
+    onDeviceDetected: (device: ScanDevice | null) => void,
+    callbacks?: BluetoothStreamCallbacks
   ) {
     if (!manager || this.isUserDisconnecting) return;
 
@@ -176,7 +239,7 @@ class BluetoothTelemetryService {
         if (!this.isUserDisconnecting) {
           console.warn('Reconectando...');
           // Delay para evitar bucles infinitos inmediatos
-          setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 2000);
+          setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected, callbacks), 2000);
         }
       });
 
@@ -213,17 +276,17 @@ class BluetoothTelemetryService {
         }
       };
 
-      const streamParser = createTelemetryStreamParser(optimizedOnTelemetry);
+      const streamParser = createTelemetryStreamParser(optimizedOnTelemetry, callbacks);
 
       this.monitorSubscription = characteristic.monitor((error, updated) => {
         if (error) return;
         if (updated?.value) streamParser(decodeBase64(updated.value));
       });
 
-    } catch (error) {
+    } catch {
       onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
-        setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);
+        setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected, callbacks), 3000);
       }
     }
   }
@@ -231,7 +294,8 @@ class BluetoothTelemetryService {
   async startPassiveTelemetryListener(
     preferredNames: string[],
     onDeviceDetected: (device: ScanDevice | null) => void,
-    onTelemetry: (telemetry: TelemetryData) => void
+    onTelemetry: (telemetry: TelemetryData) => void,
+    callbacks?: BluetoothStreamCallbacks
   ) {
     this.isUserDisconnecting = false;
     if (this.connectedDevice) {
@@ -244,7 +308,7 @@ class BluetoothTelemetryService {
     const matchedDevice = candidates[0] ?? null;
 
     if (matchedDevice) {
-      await this.establishConnection(matchedDevice.id, onTelemetry, onDeviceDetected);
+      await this.establishConnection(matchedDevice.id, onTelemetry, onDeviceDetected, callbacks);
     } else {
       onDeviceDetected(null);
     }
