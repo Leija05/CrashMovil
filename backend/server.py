@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import uuid
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -54,6 +55,7 @@ WHATSAPP_COLLISION_TEMPLATE_NAME = os.getenv("WHATSAPP_COLLISION_TEMPLATE_NAME")
 WHATSAPP_TEMPLATE_LANGUAGE = os.getenv("WHATSAPP_TEMPLATE_LANGUAGE")
 FALLBACK_REENGAGEMENT_IDS: set[str] = set()
 MESSAGE_ID_TO_PHONE: Dict[str, str] = {}
+APP_LOGGER = logging.getLogger("uvicorn.error")
 
 # ==================== MODELS ====================
 
@@ -285,13 +287,24 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     return pwd_context.verify(plain_password, password_hash)
 
 
+def mask_secret(secret: Optional[str], visible: int = 8) -> str:
+    if not secret:
+        return "<empty>"
+    if len(secret) <= visible * 2:
+        return secret
+    return f"{secret[:visible]}...{secret[-visible:]}"
+
+
 def create_access_token(user_id: str) -> str:
     expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRE_MINUTES)
     payload = {"sub": user_id, "exp": expire, "iat": datetime.now(timezone.utc)}
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    APP_LOGGER.info("JWT issued user_id=%s token=%s", user_id, token)
+    return token
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
+    APP_LOGGER.info("Auth token received token=%s", token)
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         user_id = payload.get("sub")
@@ -1318,7 +1331,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def log_http_requests(request: Request, call_next):  # type: ignore[no-untyped-def]
+    started_at = time.perf_counter()
+    auth_header = request.headers.get("authorization", "")
+    bearer_token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    APP_LOGGER.info(
+        "HTTP request start method=%s path=%s query=%s bearer_token=%s",
+        request.method,
+        request.url.path,
+        request.url.query,
+        bearer_token or "<none>",
+    )
+    response = await call_next(request)
+    elapsed_ms = (time.perf_counter() - started_at) * 1000
+    APP_LOGGER.info(
+        "HTTP request end method=%s path=%s status=%s duration_ms=%.2f",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    force=True,
+)
+
+APP_LOGGER.info(
+    "Backend token config verify_token=%s whatsapp_access_token=%s phone_number_id=%s",
+    mask_secret(WEBHOOK_VERIFY_TOKEN),
+    mask_secret(WHATSAPP_ACCESS_TOKEN),
+    mask_secret(WHATSAPP_PHONE_NUMBER_ID),
 )
