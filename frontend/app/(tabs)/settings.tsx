@@ -20,7 +20,7 @@ import * as Haptics from 'expo-haptics';
 import { useTranslation } from 'react-i18next';
 import Slider from '@react-native-community/slider';
 import { useCrashStore } from '../../src/store/crashStore';
-import { devApi, diagnosisApi, impactsApi, settingsApi } from '../../src/services/api';
+import { diagnosisApi, impactsApi, settingsApi } from '../../src/services/api';
 import i18n from '../../src/i18n';
 import {
   bluetoothTelemetryService,
@@ -30,7 +30,7 @@ import {
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
-  const { settings, updateSettings, setConnected, setConnectedDeviceName, user, contacts } = useCrashStore();
+  const { settings, updateSettings, setConnected, setConnectedDeviceName, user } = useCrashStore();
 
   const isDark = settings.theme === 'dark';
   const [deviceName, setDeviceName] = useState(settings.device_name);
@@ -227,38 +227,6 @@ export default function SettingsScreen() {
     setStoreConnected(false);
     setStoreConnectedDeviceName(null);
     toast(settings.language === 'es' ? 'Bluetooth simulado desconectado.' : 'Simulated Bluetooth disconnected.');
-  };
-
-  const sendDeveloperTemplateTest = async () => {
-    if (!user || user.role !== 'developer') return;
-    const targetContact = contacts.find((contact) => contact.is_primary) ?? contacts[0];
-    if (!targetContact) {
-      Alert.alert(
-        settings.language === 'es' ? 'Sin contacto' : 'No contact',
-        settings.language === 'es'
-          ? 'Registra al menos un contacto de emergencia para probar plantilla.'
-          : 'Add at least one emergency contact to test template.',
-      );
-      return;
-    }
-
-    setDevRunning(true);
-    try {
-      const response = await devApi.sendEmergencyTemplateTest({ contact_id: targetContact.id });
-      Alert.alert(
-        settings.language === 'es' ? 'Plantilla enviada' : 'Template sent',
-        settings.language === 'es'
-          ? `Mensaje enviado a ${response.data.contact_phone}`
-          : `Message sent to ${response.data.contact_phone}`,
-      );
-    } catch (error) {
-      Alert.alert(
-        settings.language === 'es' ? 'Error WhatsApp' : 'WhatsApp error',
-        error instanceof Error ? error.message : 'Unknown error',
-      );
-    } finally {
-      setDevRunning(false);
-    }
   };
 
   return (
@@ -468,12 +436,6 @@ export default function SettingsScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
-            <TouchableOpacity style={styles.devTemplateButton} onPress={sendDeveloperTemplateTest} disabled={devRunning}>
-              <Ionicons name="logo-whatsapp" size={16} color="#fff" />
-              <Text style={styles.devSecondaryText}>
-                {settings.language === 'es' ? 'Probar plantilla WhatsApp' : 'Test WhatsApp template'}
-              </Text>
-            </TouchableOpacity>
             {!!devAiSummary && (
               <Text style={styles.devSummaryText}>
                 IA: {devAiSummary}
@@ -526,6 +488,5 @@ const styles = StyleSheet.create({
   devPrimaryText: { color: '#001017', fontWeight: '800' },
   devSecondaryButton: { borderRadius: 12, backgroundColor: '#0f172a', paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 6 },
   devSecondaryText: { color: '#fff', fontWeight: '700' },
-  devTemplateButton: { marginTop: 10, borderRadius: 12, backgroundColor: '#16a34a', paddingVertical: 12, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 8 },
   devSummaryText: { marginTop: 10, color: '#38bdf8', fontWeight: '600' },
 });
