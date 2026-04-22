@@ -109,13 +109,19 @@ const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => 
 class BluetoothTelemetryService {
   private monitorSubscription: Subscription | null = null;
   private connectedDevice: Device | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private lastConnectedDeviceId: string | null = null;
+  private onTelemetryCallback: ((telemetry: TelemetryData) => void) | null = null;
+  private onDeviceDetectedCallback: ((device: ScanDevice | null) => void) | null = null;
   private animationFrameId: number | null = null;
   private pendingTelemetry: TelemetryData | null = null;
   private isUserDisconnecting = false;
   private latestTelemetrySentAt = 0;
-  private readonly telemetryThrottleMs = 220;
+  private readonly telemetryThrottleMs = 120;
   private readonly minSignificantGForceDelta = 0.15;
   private lastTelemetryDispatched: TelemetryData | null = null;
+  private isConnecting = false;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
@@ -156,15 +162,35 @@ class BluetoothTelemetryService {
     });
   }
 
+  private clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  private clearDiscoveryTimer() {
+    if (this.discoveryTimer) {
+      clearTimeout(this.discoveryTimer);
+      this.discoveryTimer = null;
+    }
+  }
+
   private async establishConnection(
     deviceId: string, 
     onTelemetry: (telemetry: TelemetryData) => void,
     onDeviceDetected: (device: ScanDevice | null) => void
   ) {
-    if (!manager || this.isUserDisconnecting) return;
+    if (!manager || this.isUserDisconnecting || this.isConnecting) return;
+    this.isConnecting = true;
+    this.clearReconnectTimer();
 
     try {
-      this.connectedDevice = await manager.connectToDevice(deviceId, { timeout: 10000 });
+      this.monitorSubscription?.remove();
+      this.monitorSubscription = null;
+
+      this.connectedDevice = await manager.connectToDevice(deviceId, { timeout: 9000 });
+      this.lastConnectedDeviceId = deviceId;
       onDeviceDetected(normalizeDevice(this.connectedDevice));
       if (Platform.OS === 'android') await this.connectedDevice.requestMTU(512);
 
@@ -172,11 +198,14 @@ class BluetoothTelemetryService {
 
       // Reconexión automática más robusta
       this.connectedDevice.onDisconnected(() => {
+        this.connectedDevice = null;
+        this.monitorSubscription?.remove();
+        this.monitorSubscription = null;
         onDeviceDetected(null);
         if (!this.isUserDisconnecting) {
-          console.warn('Reconectando...');
-          // Delay para evitar bucles infinitos inmediatos
-          setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 2000);
+          this.reconnectTimer = setTimeout(() => {
+            this.establishConnection(deviceId, onTelemetry, onDeviceDetected).catch(() => undefined);
+          }, 1500);
         }
       });
 
@@ -220,11 +249,15 @@ class BluetoothTelemetryService {
         if (updated?.value) streamParser(decodeBase64(updated.value));
       });
 
-    } catch (error) {
+    } catch {
       onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
-        setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);
+        this.reconnectTimer = setTimeout(() => {
+          this.establishConnection(deviceId, onTelemetry, onDeviceDetected).catch(() => undefined);
+        }, 2200);
       }
+    } finally {
+      this.isConnecting = false;
     }
   }
 
@@ -233,13 +266,22 @@ class BluetoothTelemetryService {
     onDeviceDetected: (device: ScanDevice | null) => void,
     onTelemetry: (telemetry: TelemetryData) => void
   ) {
+    this.onTelemetryCallback = onTelemetry;
+    this.onDeviceDetectedCallback = onDeviceDetected;
     this.isUserDisconnecting = false;
+
     if (this.connectedDevice) {
       onDeviceDetected(normalizeDevice(this.connectedDevice));
-      return; // Evitar múltiples conexiones
+      return;
     }
 
     await this.requestPermissions();
+
+    if (this.lastConnectedDeviceId) {
+      await this.establishConnection(this.lastConnectedDeviceId, onTelemetry, onDeviceDetected);
+      if (this.connectedDevice) return;
+    }
+
     const candidates = await this.findHardwareCandidates(preferredNames);
     const matchedDevice = candidates[0] ?? null;
 
@@ -247,11 +289,24 @@ class BluetoothTelemetryService {
       await this.establishConnection(matchedDevice.id, onTelemetry, onDeviceDetected);
     } else {
       onDeviceDetected(null);
+      if (!this.isUserDisconnecting) {
+        this.clearDiscoveryTimer();
+        this.discoveryTimer = setTimeout(() => {
+          if (!this.onTelemetryCallback || !this.onDeviceDetectedCallback) return;
+          this.startPassiveTelemetryListener(
+            preferredNames,
+            this.onDeviceDetectedCallback,
+            this.onTelemetryCallback,
+          ).catch(() => undefined);
+        }, 3000);
+      }
     }
   }
 
   stopPassiveTelemetryListener() {
     this.isUserDisconnecting = true;
+    this.clearReconnectTimer();
+    this.clearDiscoveryTimer();
     if (this.monitorSubscription) {
       this.monitorSubscription.remove();
       this.monitorSubscription = null;
