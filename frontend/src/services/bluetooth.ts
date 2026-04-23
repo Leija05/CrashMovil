@@ -64,6 +64,22 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
 
+  // Formato Arduino optimizado: TIPO:VALOR_G (ej. "AVG:1.02" o "CRASH:4.11")
+  const arduinoMatch = cleanedPayload.match(/^(CRASH|AVG)\s*:\s*(-?\d+(?:\.\d+)?)$/i);
+  if (arduinoMatch) {
+    const gForce = Number(arduinoMatch[2]);
+    if (Number.isNaN(gForce)) return null;
+    return {
+      acceleration_x: 0,
+      acceleration_y: 0,
+      acceleration_z: gForce * 9.81,
+      gyro_x: 0,
+      gyro_y: 0,
+      gyro_z: 0,
+      g_force: gForce,
+    };
+  }
+
   try {
     const parsed = JSON.parse(cleanedPayload);
     return {
