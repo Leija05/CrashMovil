@@ -13,8 +13,8 @@ export interface ScanDevice {
 }
 
 const DEFAULT_MODULE_NAMES = ['HM-10', 'HM10', 'HC-05', 'HC05', 'CRASH'];
-const DEFAULT_SERVICE_UUIDS = ['FFE0', '180F'];
-const DEFAULT_CHARACTERISTIC_UUIDS = ['FFE1', '2A19'];
+const DEFAULT_SERVICE_UUIDS = ['FFE0', 'FFF0', '6E40', '180F'];
+const DEFAULT_CHARACTERISTIC_UUIDS = ['FFE1', 'FFF1', '6E42', '2A19'];
 
 let bleAvailable = false;
 let manager: BleManager | null = null;
@@ -131,7 +131,8 @@ const createTelemetryStreamParser = (onTelemetry: (telemetry: TelemetryData) => 
   return (chunk: string) => {
     if (!chunk) return;
     // Eliminamos caracteres nulos que el HC-05 suele enviar por ruido
-    pending = `${pending}${chunk}`.replace(/\0/g, '').replace(/\r/g, ''); 
+    pending = `${pending}${chunk}`.replace(/\0/g, '').replace(/\r/g, '');
+    pending = pending.replace(/(CRASH|AVG)\s*:/gi, '\n$1:');
     const lines = pending.split('\n');
     pending = lines.pop() ?? '';
     
@@ -219,16 +220,18 @@ class BluetoothTelemetryService {
       });
 
       const services = await this.connectedDevice.services();
-      const service = services.find((s) => 
-        DEFAULT_SERVICE_UUIDS.includes(normalizeUuidFragment(s.uuid))
-      );
-      
+      const serviceByPriority = DEFAULT_SERVICE_UUIDS
+        .map((fragment) => services.find((candidate) => normalizeUuidFragment(candidate.uuid) === fragment))
+        .find(Boolean);
+      const service = serviceByPriority ?? null;
+
       if (!service) throw new Error('Servicio no compatible');
 
       const characteristics = await service.characteristics();
-      const characteristic = characteristics.find((c) =>
-        DEFAULT_CHARACTERISTIC_UUIDS.includes(normalizeUuidFragment(c.uuid))
-      );
+      const characteristicByPriority = DEFAULT_CHARACTERISTIC_UUIDS
+        .map((fragment) => characteristics.find((candidate) => normalizeUuidFragment(candidate.uuid) === fragment))
+        .find(Boolean);
+      const characteristic = characteristicByPriority ?? null;
 
       if (!characteristic) throw new Error('Característica no compatible');
 
@@ -263,12 +266,12 @@ class BluetoothTelemetryService {
 
       const streamParser = createTelemetryStreamParser(optimizedOnTelemetry);
 
-      this.monitorSubscription = characteristic.monitor((error, updated) => {
-        if (error) return;
+      this.monitorSubscription = characteristic.monitor((_error, updated) => {
+        if (_error) return;
         if (updated?.value) streamParser(decodeBase64(updated.value));
       });
 
-    } catch (error) {
+    } catch {
       onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
         setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);
