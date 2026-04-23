@@ -69,9 +69,12 @@ const normalizeDevice = (device: Device): ScanDevice | null => {
 const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
+  const normalizedPayload = cleanedPayload.replace(/^\$/, '').trim();
+  const unwrappedBracketPayload = normalizedPayload.replace(/^\[(.*)\]$/, '$1').trim();
+  const csvCandidate = unwrappedBracketPayload || normalizedPayload;
 
   // Formato Arduino recomendado: TIPO:ax,ay,az,gx,gy,gz,g (ej. "CRASH:1.2,-0.4,9.7,0.01,0.02,-0.03,1.01")
-  const arduinoAxesMatch = cleanedPayload.match(/^(CRASH|AVG)\s*:\s*(.+)$/i);
+  const arduinoAxesMatch = normalizedPayload.match(/^(CRASH|AVG)\s*:\s*(.+)$/i);
   if (arduinoAxesMatch) {
     const parts = arduinoAxesMatch[2].split(',').map((value) => Number(value.trim()));
     if (parts.length === 7 && !parts.some((value) => Number.isNaN(value))) {
@@ -101,7 +104,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   }
 
   try {
-    const parsed = JSON.parse(cleanedPayload);
+    const parsed = JSON.parse(normalizedPayload);
     return {
       acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
       acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
@@ -112,7 +115,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
       g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
     };
   } catch {
-    const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
+    const parts = csvCandidate.split(',').map((value) => Number(value.trim()));
     if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) return null;
     return {
       acceleration_x: parts[0],
@@ -149,7 +152,7 @@ class BluetoothTelemetryService {
   private pendingTelemetry: TelemetryData | null = null;
   private isUserDisconnecting = false;
   private latestTelemetrySentAt = 0;
-  private readonly telemetryThrottleMs = 220;
+  private readonly telemetryThrottleMs = 50;
   private readonly minSignificantGForceDelta = 0.15;
   private lastTelemetryDispatched: TelemetryData | null = null;
   private lastDebugConsoleLogAt = 0;
@@ -268,7 +271,7 @@ class BluetoothTelemetryService {
         if (updated?.value) streamParser(decodeBase64(updated.value));
       });
 
-    } catch (error) {
+    } catch {
       onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
         setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);

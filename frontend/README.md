@@ -23,6 +23,7 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 - Accepted payload formats from firmware:
   - JSON: `{\"ax\":0.1,\"ay\":0.2,\"az\":1.0,\"gx\":0.0,\"gy\":0.0,\"gz\":0.0,\"g\":1.02}`
   - CSV: `ax,ay,az,gx,gy,gz,g`
+  - Arduino packet with sync token: `$ax,ay,az,gx,gy,gz,g` (also supports `$[ax,ay,az,gx,gy,gz,g]`)
 - Compatible modules: HM-10 / HC-05 (Bluetooth LE).
 
 In the output, you'll find options to open the app in a
