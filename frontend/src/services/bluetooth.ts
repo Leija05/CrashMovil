@@ -64,10 +64,24 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
 
-  // Formato Arduino optimizado: TIPO:VALOR_G (ej. "AVG:1.02" o "CRASH:4.11")
-  const arduinoMatch = cleanedPayload.match(/^(CRASH|AVG)\s*:\s*(-?\d+(?:\.\d+)?)$/i);
-  if (arduinoMatch) {
-    const gForce = Number(arduinoMatch[2]);
+  // Formato Arduino recomendado: TIPO:ax,ay,az,gx,gy,gz,g (ej. "CRASH:1.2,-0.4,9.7,0.01,0.02,-0.03,1.01")
+  const arduinoAxesMatch = cleanedPayload.match(/^(CRASH|AVG)\s*:\s*(.+)$/i);
+  if (arduinoAxesMatch) {
+    const parts = arduinoAxesMatch[2].split(',').map((value) => Number(value.trim()));
+    if (parts.length === 7 && !parts.some((value) => Number.isNaN(value))) {
+      return {
+        acceleration_x: parts[0],
+        acceleration_y: parts[1],
+        acceleration_z: parts[2],
+        gyro_x: parts[3],
+        gyro_y: parts[4],
+        gyro_z: parts[5],
+        g_force: parts[6],
+      };
+    }
+
+    // Compatibilidad hacia atrás: TIPO:VALOR_G (ej. "AVG:1.02" o "CRASH:4.11")
+    const gForce = Number(arduinoAxesMatch[2].trim());
     if (Number.isNaN(gForce)) return null;
     return {
       acceleration_x: 0,
