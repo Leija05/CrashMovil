@@ -23,6 +23,9 @@ This is an [Expo](https://expo.dev) project created with [`create-expo-app`](htt
 - Accepted payload formats from firmware:
   - JSON: `{\"ax\":0.1,\"ay\":0.2,\"az\":1.0,\"gx\":0.0,\"gy\":0.0,\"gz\":0.0,\"g\":1.02}`
   - CSV: `ax,ay,az,gx,gy,gz,g`
+  - Arduino packet with sync token: `$ax,ay,az,gx,gy,gz,g` (also supports `$[ax,ay,az,gx,gy,gz,g]`)
+  - Filtered Adafruit stream: `CRASH:40.21`, `MOV:12.45`, `OK:9.80` (scalar in m/s²; app normalizes to g-force)
+- Informational lines like `SISTEMA:FILTRADO_ACTIVO` or `ERR:SENSOR` are safely ignored by telemetry parsing.
 - Compatible modules: HM-10 / HC-05 (Bluetooth LE).
 
 In the output, you'll find options to open the app in a

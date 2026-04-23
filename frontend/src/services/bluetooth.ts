@@ -69,11 +69,19 @@ const normalizeDevice = (device: Device): ScanDevice | null => {
 const parseTelemetry = (payload: string): TelemetryData | null => {
   const cleanedPayload = payload.trim();
   if (!cleanedPayload) return null;
+  const normalizedPayload = cleanedPayload.replace(/^\$/, '').trim();
+  const unwrappedBracketPayload = normalizedPayload.replace(/^\[(.*)\]$/, '$1').trim();
+  const csvCandidate = unwrappedBracketPayload || normalizedPayload;
+  const MS2_TO_G = 1 / 9.81;
 
-  // Formato Arduino recomendado: TIPO:ax,ay,az,gx,gy,gz,g (ej. "CRASH:1.2,-0.4,9.7,0.01,0.02,-0.03,1.01")
-  const arduinoAxesMatch = cleanedPayload.match(/^(CRASH|AVG)\s*:\s*(.+)$/i);
+  // Formatos Arduino soportados:
+  // - TIPO:ax,ay,az,gx,gy,gz,g
+  // - TIPO:valor (g o m/s² según firmware)
+  const arduinoAxesMatch = normalizedPayload.match(/^(CRASH|AVG|MOV|OK)\s*:\s*(.+)$/i);
   if (arduinoAxesMatch) {
-    const parts = arduinoAxesMatch[2].split(',').map((value) => Number(value.trim()));
+    const eventType = arduinoAxesMatch[1].toUpperCase();
+    const valueSection = arduinoAxesMatch[2].trim();
+    const parts = valueSection.split(',').map((value) => Number(value.trim()));
     if (parts.length === 7 && !parts.some((value) => Number.isNaN(value))) {
       return {
         acceleration_x: parts[0],
@@ -86,13 +94,18 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
       };
     }
 
-    // Compatibilidad hacia atrás: TIPO:VALOR_G (ej. "AVG:1.02" o "CRASH:4.11")
-    const gForce = Number(arduinoAxesMatch[2].trim());
-    if (Number.isNaN(gForce)) return null;
+    // Compatibilidad para firmware que envía un único escalar:
+    // - legado en g ("AVG:1.02")
+    // - filtrado Adafruit en m/s² ("MOV:12.45", "OK:9.80", "CRASH:40.21")
+    const scalarValue = Number(valueSection);
+    if (Number.isNaN(scalarValue)) return null;
+    const gForce = ['MOV', 'OK'].includes(eventType) || scalarValue > 20
+      ? scalarValue * MS2_TO_G
+      : scalarValue;
     return {
       acceleration_x: 0,
       acceleration_y: 0,
-      acceleration_z: gForce * 9.81,
+      acceleration_z: scalarValue,
       gyro_x: 0,
       gyro_y: 0,
       gyro_z: 0,
@@ -101,7 +114,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
   }
 
   try {
-    const parsed = JSON.parse(cleanedPayload);
+    const parsed = JSON.parse(normalizedPayload);
     return {
       acceleration_x: Number(parsed.acceleration_x ?? parsed.ax ?? 0),
       acceleration_y: Number(parsed.acceleration_y ?? parsed.ay ?? 0),
@@ -112,7 +125,7 @@ const parseTelemetry = (payload: string): TelemetryData | null => {
       g_force: Number(parsed.g_force ?? parsed.g ?? parsed.gforce ?? 0),
     };
   } catch {
-    const parts = cleanedPayload.split(',').map((value) => Number(value.trim()));
+    const parts = csvCandidate.split(',').map((value) => Number(value.trim()));
     if (parts.length < 7 || parts.some((value) => Number.isNaN(value))) return null;
     return {
       acceleration_x: parts[0],
@@ -149,7 +162,7 @@ class BluetoothTelemetryService {
   private pendingTelemetry: TelemetryData | null = null;
   private isUserDisconnecting = false;
   private latestTelemetrySentAt = 0;
-  private readonly telemetryThrottleMs = 220;
+  private readonly telemetryThrottleMs = 50;
   private readonly minSignificantGForceDelta = 0.15;
   private lastTelemetryDispatched: TelemetryData | null = null;
   private lastDebugConsoleLogAt = 0;
@@ -268,7 +281,7 @@ class BluetoothTelemetryService {
         if (updated?.value) streamParser(decodeBase64(updated.value));
       });
 
-    } catch (error) {
+    } catch {
       onDeviceDetected(null);
       if (!this.isUserDisconnecting) {
         setTimeout(() => this.establishConnection(deviceId, onTelemetry, onDeviceDetected), 3000);
