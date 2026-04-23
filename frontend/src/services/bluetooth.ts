@@ -30,6 +30,12 @@ try {
 export const isBluetoothLeAvailable = () => bleAvailable;
 
 const normalizeName = (value: string) => value.trim().toUpperCase().replace(/\s+/g, '');
+const normalizeUuidFragment = (uuid: string) => {
+  const normalized = String(uuid || '').replace(/-/g, '').toUpperCase();
+  if (normalized.length === 4) return normalized;
+  if (normalized.length >= 8 && normalized.startsWith('0000')) return normalized.slice(4, 8);
+  return normalized.slice(-4);
+};
 
 const decodeBase64 = (value: string) => {
   if (!value) return '';
@@ -146,6 +152,8 @@ class BluetoothTelemetryService {
   private readonly telemetryThrottleMs = 220;
   private readonly minSignificantGForceDelta = 0.15;
   private lastTelemetryDispatched: TelemetryData | null = null;
+  private lastDebugConsoleLogAt = 0;
+  private readonly debugConsoleIntervalMs = 10000;
 
   async requestPermissions() {
     if (Platform.OS !== 'android') return;
@@ -212,14 +220,14 @@ class BluetoothTelemetryService {
 
       const services = await this.connectedDevice.services();
       const service = services.find((s) => 
-        DEFAULT_SERVICE_UUIDS.includes(s.uuid.slice(4, 8).toUpperCase())
+        DEFAULT_SERVICE_UUIDS.includes(normalizeUuidFragment(s.uuid))
       );
       
       if (!service) throw new Error('Servicio no compatible');
 
       const characteristics = await service.characteristics();
       const characteristic = characteristics.find((c) =>
-        DEFAULT_CHARACTERISTIC_UUIDS.includes(c.uuid.slice(4, 8).toUpperCase())
+        DEFAULT_CHARACTERISTIC_UUIDS.includes(normalizeUuidFragment(c.uuid))
       );
 
       if (!characteristic) throw new Error('Característica no compatible');
@@ -231,6 +239,16 @@ class BluetoothTelemetryService {
         const lastG = this.lastTelemetryDispatched?.g_force ?? 0;
         const shouldSendByImpact = Math.abs(data.g_force - lastG) >= this.minSignificantGForceDelta;
         if (!shouldSendByTime && !shouldSendByImpact) return;
+
+        if (now - this.lastDebugConsoleLogAt >= this.debugConsoleIntervalMs) {
+          this.lastDebugConsoleLogAt = now;
+          console.log(
+            `[CRASH][BLE][${new Date(now).toISOString()}] ` +
+            `A=(${data.acceleration_x.toFixed(2)},${data.acceleration_y.toFixed(2)},${data.acceleration_z.toFixed(2)}) ` +
+            `G=(${data.gyro_x.toFixed(2)},${data.gyro_y.toFixed(2)},${data.gyro_z.toFixed(2)}) ` +
+            `g_force=${data.g_force.toFixed(2)}`
+          );
+        }
 
         this.latestTelemetrySentAt = now;
         this.lastTelemetryDispatched = data;
