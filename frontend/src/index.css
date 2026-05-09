@@ -150,3 +150,30 @@ h1, h2, h3, h4, h5, h6 {
     * { @apply border-border; }
     body { @apply bg-background text-foreground; }
 }
+
+/* Soft theme */
+body[data-theme='soft'] {
+  --bg-app: #161923;
+  --bg-app-2: #1b1f2b;
+  color: #e8ebf5;
+  background-color: var(--bg-app);
+  background-image:
+    radial-gradient(circle at 15% 0%, rgba(129,140,248,0.18), transparent 45%),
+    radial-gradient(circle at 85% 100%, rgba(20,184,166,0.13), transparent 40%);
+}
+
+body[data-theme='soft'] .App {
+  background-color: var(--bg-app);
+  color: #e8ebf5;
+}
+
+body[data-theme='soft'] .leaflet-container {
+  background: #171b27 !important;
+  filter: saturate(0.82) hue-rotate(-10deg) brightness(1.05);
+}
+
+body[data-theme='soft'] [class*='bg-[#0A0A0A]'],
+body[data-theme='soft'] [class*='bg-black'],
+body[data-theme='soft'] [class*='bg-white/[0.03]'] {
+  filter: hue-rotate(-12deg) saturate(0.72) brightness(1.15);
+}

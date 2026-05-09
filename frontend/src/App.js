@@ -1,5 +1,6 @@
 import "./App.css";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { useEffect } from "react";
 import { AuthProvider } from "./auth/AuthContext";
 import ProtectedRoute from "./auth/ProtectedRoute";
 import Login from "./pages/Login";
@@ -7,6 +8,11 @@ import Dashboard from "./pages/Dashboard";
 import History from "./pages/History";
 
 function App() {
+  useEffect(() => {
+    const saved = localStorage.getItem("crash-theme") || "dark";
+    document.body.dataset.theme = saved;
+  }, []);
+
   return (
     <div className="App">
       <AuthProvider>

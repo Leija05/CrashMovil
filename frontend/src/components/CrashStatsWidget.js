@@ -9,6 +9,18 @@ import {
   X,
 } from "lucide-react";
 import { api, formatApiError } from "../lib/api";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 
 const SEVERITY_SCORE = {
   critical: 4,
@@ -28,6 +40,20 @@ function severityScore(impact) {
     .toLowerCase();
   return SEVERITY_SCORE[raw] || 0;
 }
+
+
+
+const STATUS_LABEL = {
+  pending: "Pendiente",
+  acknowledged: "Atendido",
+  false_alarm: "Falsa alarma",
+};
+
+const STATUS_COLOR = {
+  pending: "#ef4444",
+  acknowledged: "#10b981",
+  false_alarm: "#a3a3a3",
+};
 
 function severityLabel(score) {
   if (!score) return "Sin datos";
@@ -88,6 +114,37 @@ export default function CrashStatsWidget() {
     return { total, avgSeverity, perDay, pending, withGps };
   }, [impacts]);
 
+
+
+  const statusChart = useMemo(() => {
+    const counts = { pending: 0, acknowledged: 0, false_alarm: 0 };
+    impacts.forEach((i) => {
+      if (counts[i.status] != null) counts[i.status] += 1;
+    });
+    return Object.keys(counts).map((key) => ({
+      name: STATUS_LABEL[key],
+      value: counts[key],
+      color: STATUS_COLOR[key],
+    }));
+  }, [impacts]);
+
+  const trendChart = useMemo(() => {
+    const map = new Map();
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      map.set(key, 0);
+    }
+    impacts.forEach((i) => {
+      const k = (i.ts || "").slice(0, 10);
+      if (map.has(k)) map.set(k, map.get(k) + 1);
+    });
+    return [...map.entries()].map(([date, total]) => ({
+      day: date.slice(5).replace("-", "/"),
+      total,
+    }));
+  }, [impacts]);
   return (
     <>
       <button
@@ -173,6 +230,40 @@ export default function CrashStatsWidget() {
                         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-2">
                           <div className="font-mono text-sm text-emerald-300">{stats.withGps}</div>
                           GPS
+                        </div>
+                      </div>
+                      <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <div className="h-48 rounded-xl border border-white/10 bg-white/[0.02] p-2">
+                          <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500">Estado de alertas</div>
+                          <ResponsiveContainer width="100%" height="85%">
+                            <BarChart data={statusChart}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                              <XAxis dataKey="name" stroke="#a3a3a3" fontSize={10} />
+                              <YAxis stroke="#a3a3a3" fontSize={10} allowDecimals={false} />
+                              <Tooltip
+                                contentStyle={{ background: "#0f1114", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10 }}
+                              />
+                              <Bar dataKey="value" radius={[8, 8, 0, 0]}>
+                                {statusChart.map((entry) => (
+                                  <Cell key={entry.name} fill={entry.color} />
+                                ))}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                        <div className="h-48 rounded-xl border border-white/10 bg-white/[0.02] p-2">
+                          <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-neutral-500">Tendencia 7 días</div>
+                          <ResponsiveContainer width="100%" height="85%">
+                            <LineChart data={trendChart}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
+                              <XAxis dataKey="day" stroke="#a3a3a3" fontSize={10} />
+                              <YAxis stroke="#a3a3a3" fontSize={10} allowDecimals={false} />
+                              <Tooltip
+                                contentStyle={{ background: "#0f1114", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 10 }}
+                              />
+                              <Line type="monotone" dataKey="total" stroke="#22d3ee" strokeWidth={2.5} dot={{ fill: "#22d3ee", r: 3 }} />
+                            </LineChart>
+                          </ResponsiveContainer>
                         </div>
                       </div>
                       <div className="mt-4 flex items-start gap-2 text-[11px] leading-relaxed text-neutral-500">

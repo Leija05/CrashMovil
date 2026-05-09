@@ -1,4 +1,12 @@
-import { ShieldAlert, LogOut, Wifi, WifiOff, History } from "lucide-react";
+import {
+  ShieldAlert,
+  LogOut,
+  Wifi,
+  WifiOff,
+  History,
+  Palette,
+} from "lucide-react";
+import { useEffect, useState } from "react";
 import CrashStatsWidget from "./CrashStatsWidget";
 import { useAuth } from "../auth/AuthContext";
 
@@ -10,6 +18,14 @@ const STATUS_LABEL = {
 
 export default function Topbar({ status, alertCount, onOpenHistory }) {
   const { user, logout } = useAuth();
+  const [theme, setTheme] = useState(() =>
+    localStorage.getItem("crash-theme") || "dark",
+  );
+
+  useEffect(() => {
+    document.body.dataset.theme = theme;
+    localStorage.setItem("crash-theme", theme);
+  }, [theme]);
 
   return (
     <header className="flex items-center justify-between px-4 py-3 rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-2xl">
@@ -29,6 +45,16 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
       </div>
 
       <div className="hidden md:flex items-center gap-3">
+        <button
+          data-testid="toggle-theme"
+          onClick={() => setTheme((v) => (v === "dark" ? "soft" : "dark"))}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-violet-400/40 hover:bg-violet-400/10 text-[10px] uppercase tracking-[0.25em] text-neutral-300 hover:text-violet-200 transition-all"
+          title="Cambiar tema"
+        >
+          <Palette className="h-3.5 w-3.5" />
+          {theme === "dark" ? "Tema suave" : "Tema oscuro"}
+        </button>
+
         <CrashStatsWidget />
 
         <button
