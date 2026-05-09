@@ -47,12 +47,12 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
       <div className="hidden md:flex items-center gap-3">
         <button
           data-testid="toggle-theme"
-          onClick={() => setTheme((v) => (v === "dark" ? "soft" : "dark"))}
+          onClick={() => setTheme((v) => (v === "dark" ? "light" : "dark"))}
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-violet-400/40 hover:bg-violet-400/10 text-[10px] uppercase tracking-[0.25em] text-neutral-300 hover:text-violet-200 transition-all"
           title="Cambiar tema"
         >
           <Palette className="h-3.5 w-3.5" />
-          {theme === "dark" ? "Tema suave" : "Tema oscuro"}
+          {theme === "dark" ? "Tema claro" : "Tema oscuro"}
         </button>
 
         <CrashStatsWidget />

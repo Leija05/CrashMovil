@@ -151,29 +151,43 @@ h1, h2, h3, h4, h5, h6 {
     body { @apply bg-background text-foreground; }
 }
 
-/* Soft theme */
-body[data-theme='soft'] {
-  --bg-app: #161923;
-  --bg-app-2: #1b1f2b;
-  color: #e8ebf5;
+
+
+/* Light theme */
+body[data-theme='light'] {
+  --bg-app: #f4f7fb;
+  --bg-app-2: #e9eef6;
+  color: #0f172a;
   background-color: var(--bg-app);
   background-image:
-    radial-gradient(circle at 15% 0%, rgba(129,140,248,0.18), transparent 45%),
-    radial-gradient(circle at 85% 100%, rgba(20,184,166,0.13), transparent 40%);
+    radial-gradient(circle at 10% 0%, rgba(56,189,248,0.16), transparent 35%),
+    radial-gradient(circle at 90% 100%, rgba(16,185,129,0.1), transparent 40%);
 }
 
-body[data-theme='soft'] .App {
+body[data-theme='light'] .App,
+body[data-theme='light'] #root {
   background-color: var(--bg-app);
-  color: #e8ebf5;
+  color: #0f172a;
 }
 
-body[data-theme='soft'] .leaflet-container {
-  background: #171b27 !important;
-  filter: saturate(0.82) hue-rotate(-10deg) brightness(1.05);
+body[data-theme='light'] [class*='bg-[#0A0A0A]'],
+body[data-theme='light'] [class*='bg-black'],
+body[data-theme='light'] [class*='bg-white/[0.03]'],
+body[data-theme='light'] [class*='bg-white/[0.02]'] {
+  background-color: rgba(255,255,255,0.86) !important;
+  color: #0f172a !important;
 }
 
-body[data-theme='soft'] [class*='bg-[#0A0A0A]'],
-body[data-theme='soft'] [class*='bg-black'],
-body[data-theme='soft'] [class*='bg-white/[0.03]'] {
-  filter: hue-rotate(-12deg) saturate(0.72) brightness(1.15);
+body[data-theme='light'] [class*='border-white/10'],
+body[data-theme='light'] [class*='border-white/20'] {
+  border-color: rgba(15,23,42,0.15) !important;
+}
+
+body[data-theme='light'] [class*='text-neutral-500'] { color: #64748b !important; }
+body[data-theme='light'] [class*='text-neutral-400'] { color: #334155 !important; }
+body[data-theme='light'] [class*='text-neutral-300'] { color: #1e293b !important; }
+
+body[data-theme='light'] .leaflet-container {
+  background: #dbe7f3 !important;
+  filter: brightness(1.08) saturate(0.9);
 }
