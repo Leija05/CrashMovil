@@ -76,7 +76,9 @@ async def get_current_user(request: Request) -> dict:
     if payload.get("type") != "access":
         raise HTTPException(status_code=401, detail="Invalid token type")
 
-    user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0, "password_hash": 0})
+    user = await db.monitor_operators.find_one(
+        {"id": payload["sub"]}, {"_id": 0, "password_hash": 0}
+    )
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
     return user

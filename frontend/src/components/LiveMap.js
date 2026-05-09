@@ -2,7 +2,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useEffect, useMemo } from "react";
 
-// Fix leaflet default icon (we use divIcon anyway, but keep safety)
+// Fix leaflet default icon
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
@@ -20,10 +20,12 @@ function makeIcon(status) {
   });
 }
 
+const hasCoords = (d) => typeof d?.lat === "number" && typeof d?.lng === "number";
+
 function FocusController({ focusDriver }) {
   const map = useMap();
   useEffect(() => {
-    if (focusDriver) {
+    if (focusDriver && hasCoords(focusDriver)) {
       map.flyTo([focusDriver.lat, focusDriver.lng], 15, { duration: 0.8 });
     }
   }, [focusDriver, map]);
@@ -32,9 +34,15 @@ function FocusController({ focusDriver }) {
 
 export default function LiveMap({ drivers, selectedId, onSelect }) {
   const driverList = useMemo(() => Object.values(drivers || {}), [drivers]);
-  const center = driverList[0] ? [driverList[0].lat, driverList[0].lng] : [19.4326, -99.1332];
+  const positioned = useMemo(() => driverList.filter(hasCoords), [driverList]);
+
+  // Center: first driver with coords, else CDMX
+  const center = positioned[0]
+    ? [positioned[0].lat, positioned[0].lng]
+    : [19.4326, -99.1332];
 
   const focus = selectedId ? drivers[selectedId] : null;
+  const noGpsCount = driverList.length - positioned.length;
 
   return (
     <div className="relative h-full w-full" data-testid="live-map">
@@ -52,7 +60,7 @@ export default function LiveMap({ drivers, selectedId, onSelect }) {
         />
         <FocusController focusDriver={focus} />
 
-        {driverList.map((d) => (
+        {positioned.map((d) => (
           <Marker
             key={d.id}
             position={[d.lat, d.lng]}
@@ -62,23 +70,27 @@ export default function LiveMap({ drivers, selectedId, onSelect }) {
             <Popup>
               <div className="min-w-[200px]">
                 <div className="text-[10px] uppercase tracking-[0.3em] text-neutral-400">
-                  {d.id}
+                  {d.id?.slice?.(-8)}
                 </div>
                 <div className="font-semibold text-base mb-2">{d.name}</div>
                 <div className="grid grid-cols-2 gap-2 font-mono text-xs">
                   <div>
                     <div className="text-[10px] uppercase text-neutral-500">Velocidad</div>
-                    <div className="text-emerald-400">{Math.round(d.speed)} km/h</div>
+                    <div className="text-emerald-400">
+                      {d.speed != null ? `${Math.round(d.speed)} km/h` : "—"}
+                    </div>
                   </div>
                   <div>
                     <div className="text-[10px] uppercase text-neutral-500">G-Force</div>
                     <div className={d.gforce > 3 ? "text-red-400" : "text-white"}>
-                      {d.gforce.toFixed(2)}G
+                      {d.gforce != null ? d.gforce.toFixed(2) : "—"}G
                     </div>
                   </div>
                   <div className="col-span-2">
                     <div className="text-[10px] uppercase text-neutral-500">GPS</div>
-                    <div>{d.lat.toFixed(5)}, {d.lng.toFixed(5)}</div>
+                    <div>
+                      {d.lat.toFixed(5)}, {d.lng.toFixed(5)}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -94,6 +106,16 @@ export default function LiveMap({ drivers, selectedId, onSelect }) {
         <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-amber-500" /> Advertencia</div>
         <div className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full bg-neutral-600" /> Offline</div>
       </div>
+
+      {/* No-GPS warning */}
+      {noGpsCount > 0 ? (
+        <div
+          data-testid="no-gps-banner"
+          className="absolute top-4 right-4 z-[400] max-w-[280px] rounded-xl border border-amber-500/30 bg-amber-500/10 backdrop-blur-xl px-3 py-2 text-[10px] uppercase tracking-[0.2em] text-amber-300"
+        >
+          {noGpsCount} sin GPS — el mobile aún no envía coordenadas en /api/telemetry
+        </div>
+      ) : null}
     </div>
   );
 }

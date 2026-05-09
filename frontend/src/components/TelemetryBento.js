@@ -5,6 +5,7 @@ function Card({ label, children, tone = "default", testid }) {
     default:  "border-white/10",
     critical: "border-red-500/40 shadow-[0_0_25px_rgba(239,68,68,0.15)]",
     active:   "border-emerald-500/30",
+    warning:  "border-amber-500/30",
   }[tone] || "border-white/10";
 
   return (
@@ -17,6 +18,9 @@ function Card({ label, children, tone = "default", testid }) {
     </div>
   );
 }
+
+const fmtNum = (v, digits = 0) =>
+  typeof v === "number" && Number.isFinite(v) ? v.toFixed(digits) : "—";
 
 export default function TelemetryBento({ driver }) {
   if (!driver) {
@@ -34,8 +38,18 @@ export default function TelemetryBento({ driver }) {
   }
 
   const isCrit = driver.status === "critical";
-  const gforceTone = driver.gforce >= 4 ? "critical" : driver.gforce >= 2.5 ? "warning" : "active";
-  const speedColor = driver.speed > 80 ? "text-amber-400" : "text-white";
+  const speed = typeof driver.speed === "number" ? driver.speed : null;
+  const gforce = typeof driver.gforce === "number" ? driver.gforce : null;
+  const lat = typeof driver.lat === "number" ? driver.lat : null;
+  const lng = typeof driver.lng === "number" ? driver.lng : null;
+
+  const gforceTone =
+    gforce == null ? "default"
+    : gforce >= 4 ? "critical"
+    : gforce >= 2.5 ? "warning"
+    : "active";
+
+  const speedColor = speed != null && speed > 80 ? "text-amber-400" : "text-white";
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" data-testid="telemetry-bento">
@@ -55,18 +69,22 @@ export default function TelemetryBento({ driver }) {
               {driver.helmet_connected ? "ONLINE" : "OFFLINE"}
             </div>
             <div className="text-xs text-neutral-400 mt-0.5">
-              {driver.helmet_connected ? "Conectado al headset" : "Desconectado"}
+              {driver.helmet_connected ? "Conectado al headset" : "Sin telemetría reciente"}
             </div>
           </div>
         </div>
       </Card>
 
-      <Card label="Velocidad" testid="telemetry-speed" tone={driver.speed > 80 ? "warning" : "default"}>
+      <Card
+        label="Velocidad"
+        testid="telemetry-speed"
+        tone={speed != null && speed > 80 ? "warning" : "default"}
+      >
         <div className="flex items-end gap-2">
           <Gauge className="h-7 w-7 text-emerald-400 mb-1" />
           <div>
             <div className={`font-mono text-4xl font-bold tracking-tighter ${speedColor}`}>
-              {Math.round(driver.speed)}
+              {fmtNum(speed)}
             </div>
             <div className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">km/h</div>
           </div>
@@ -76,16 +94,21 @@ export default function TelemetryBento({ driver }) {
       <Card label="G-Force" testid="telemetry-gforce" tone={gforceTone === "critical" ? "critical" : "default"}>
         <div className="flex items-end gap-2">
           <Activity className={`h-7 w-7 mb-1 ${
-            gforceTone === "critical" ? "text-red-400" : gforceTone === "warning" ? "text-amber-400" : "text-emerald-400"
+            gforceTone === "critical" ? "text-red-400"
+            : gforceTone === "warning" ? "text-amber-400"
+            : "text-emerald-400"
           }`} />
           <div>
             <div className={`font-mono text-4xl font-bold tracking-tighter ${
               gforceTone === "critical" ? "text-red-400" : "text-white"
             }`}>
-              {driver.gforce.toFixed(2)}<span className="text-base text-neutral-500 ml-1">G</span>
+              {fmtNum(gforce, 2)}<span className="text-base text-neutral-500 ml-1">G</span>
             </div>
             <div className="text-[10px] uppercase tracking-[0.3em] text-neutral-500">
-              {isCrit ? "IMPACTO DETECTADO" : driver.gforce >= 2.5 ? "Esfuerzo" : "Estable"}
+              {isCrit ? "IMPACTO DETECTADO"
+                : gforce != null && gforce >= 2.5 ? "Esfuerzo"
+                : gforce != null ? "Estable"
+                : "Sin datos"}
             </div>
           </div>
         </div>
@@ -95,16 +118,26 @@ export default function TelemetryBento({ driver }) {
         <div className="flex items-start gap-2">
           <MapPin className="h-6 w-6 text-emerald-400 mt-1" />
           <div className="flex-1">
-            <div className="font-mono text-sm text-white leading-tight">
-              {driver.lat.toFixed(5)}<span className="text-neutral-500">°</span>
-            </div>
-            <div className="font-mono text-sm text-white leading-tight">
-              {driver.lng.toFixed(5)}<span className="text-neutral-500">°</span>
-            </div>
-            <div className="flex items-center gap-1.5 mt-2">
-              <Battery className="h-3 w-3 text-neutral-400" />
-              <div className="text-[11px] font-mono text-neutral-300">{driver.battery}%</div>
-            </div>
+            {lat != null && lng != null ? (
+              <>
+                <div className="font-mono text-sm text-white leading-tight">
+                  {lat.toFixed(5)}<span className="text-neutral-500">°</span>
+                </div>
+                <div className="font-mono text-sm text-white leading-tight">
+                  {lng.toFixed(5)}<span className="text-neutral-500">°</span>
+                </div>
+              </>
+            ) : (
+              <div className="font-mono text-sm text-neutral-500 leading-tight">
+                Sin coordenadas
+              </div>
+            )}
+            {driver.battery != null ? (
+              <div className="flex items-center gap-1.5 mt-2">
+                <Battery className="h-3 w-3 text-neutral-400" />
+                <div className="text-[11px] font-mono text-neutral-300">{driver.battery}%</div>
+              </div>
+            ) : null}
           </div>
         </div>
       </Card>
