@@ -42,6 +42,30 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _extract_coords(telemetry: Optional[dict], impact: Optional[dict]) -> tuple[Optional[float], Optional[float]]:
+    telemetry = telemetry or {}
+    candidates = [
+        (telemetry.get("latitude"), telemetry.get("longitude")),
+        (telemetry.get("lat"), telemetry.get("lng")),
+        (telemetry.get("lat"), telemetry.get("lon")),
+        ((telemetry.get("location") or {}).get("latitude"), (telemetry.get("location") or {}).get("longitude")),
+        ((telemetry.get("location") or {}).get("lat"), (telemetry.get("location") or {}).get("lng")),
+        ((telemetry.get("coords") or {}).get("latitude"), (telemetry.get("coords") or {}).get("longitude")),
+    ]
+    for lat, lng in candidates:
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
+
+    if impact:
+        loc = impact.get("location") or {}
+        lat = loc.get("latitude") if loc.get("latitude") is not None else loc.get("lat")
+        lng = loc.get("longitude") if loc.get("longitude") is not None else loc.get("lng")
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
+
+    return None, None
+
+
 class MobileBridge:
     def __init__(self) -> None:
         self.drivers: Dict[str, dict] = {}
@@ -159,13 +183,8 @@ class MobileBridge:
             else:
                 status = "offline"
 
-            # GPS: prefer telemetry, fallback to recent impact location
-            lat = telemetry.get("latitude") if telemetry else None
-            lng = telemetry.get("longitude") if telemetry else None
-            if (lat is None or lng is None) and recent_impact:
-                loc = recent_impact.get("location") or {}
-                lat = loc.get("latitude") if lat is None else lat
-                lng = loc.get("longitude") if lng is None else lng
+            # GPS: robust extraction from telemetry formats + impact fallback
+            lat, lng = _extract_coords(telemetry, recent_impact)
 
             # Speed: from telemetry if mobile sends it
             speed = (telemetry or {}).get("speed")
