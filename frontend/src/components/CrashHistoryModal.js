@@ -74,6 +74,7 @@ export default function CrashHistoryModal({ open, onClose }) {
   const [impacts, setImpacts] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [theme, setTheme] = useState(() => document.body.dataset.theme || "dark");
 
   // filters
   const [q, setQ] = useState("");
@@ -114,6 +115,12 @@ export default function CrashHistoryModal({ open, onClose }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+
+  useEffect(() => {
+    const updateTheme = () => setTheme(document.body.dataset.theme || "dark");
+    window.addEventListener("themechange", updateTheme);
+    return () => window.removeEventListener("themechange", updateTheme);
+  }, []);
   // Close on Esc
   useEffect(() => {
     if (!open) return;
@@ -345,7 +352,7 @@ export default function CrashHistoryModal({ open, onClose }) {
           {/* Map */}
           <div className="lg:col-span-3 border-b lg:border-b-0 lg:border-r border-white/10 relative h-[45vh] min-h-[280px] lg:h-auto lg:min-h-0">
             {withGps.length > 0 ? (
-              <MapContainer
+              <MapContainer key={`history-map-${theme}`}
                 center={selected ? [selected.lat, selected.lng] : center}
                 zoom={selected ? 15 : 12}
                 className="h-full w-full"
@@ -353,7 +360,9 @@ export default function CrashHistoryModal({ open, onClose }) {
               >
                 <TileLayer
                   attribution="&copy; carto.com"
-                  url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+                  url={theme === "light"
+                      ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                      : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"}
                 />
                 {/* Halo on selected */}
                 {selected && selected.lat && selected.lng ? (

@@ -1,6 +1,6 @@
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L from "leaflet";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 // Fix leaflet default icon
 delete L.Icon.Default.prototype._getIconUrl;
@@ -33,6 +33,13 @@ function FocusController({ focusDriver }) {
 }
 
 export default function LiveMap({ drivers, selectedId, onSelect }) {
+  const [theme, setTheme] = useState(() => document.body.dataset.theme || "dark");
+
+  useEffect(() => {
+    const updateTheme = () => setTheme(document.body.dataset.theme || "dark");
+    window.addEventListener("themechange", updateTheme);
+    return () => window.removeEventListener("themechange", updateTheme);
+  }, []);
   const driverList = useMemo(() => Object.values(drivers || {}), [drivers]);
   const positioned = useMemo(() => driverList.filter(hasCoords), [driverList]);
 
@@ -46,17 +53,19 @@ export default function LiveMap({ drivers, selectedId, onSelect }) {
 
   return (
     <div className="relative h-full w-full" data-testid="live-map">
-      <MapContainer
+      <MapContainer key={`live-map-${theme}`}
         center={center}
         zoom={13}
         scrollWheelZoom
         zoomControl={true}
         className="h-full w-full"
-        style={{ background: "#0a0a0a" }}
+        style={{ background: theme === "light" ? "#dbe7f3" : "#0a0a0a" }}
       >
         <TileLayer
           attribution='&copy; <a href="https://carto.com/">carto.com</a>'
-          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+          url={theme === "light"
+            ? "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+            : "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"}
         />
         <FocusController focusDriver={focus} />
 

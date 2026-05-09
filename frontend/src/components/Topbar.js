@@ -25,6 +25,7 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
   useEffect(() => {
     document.body.dataset.theme = theme;
     localStorage.setItem("crash-theme", theme);
+    window.dispatchEvent(new Event("themechange"));
   }, [theme]);
 
   return (
