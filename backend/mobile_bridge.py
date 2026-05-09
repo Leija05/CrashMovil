@@ -52,6 +52,13 @@ def _extract_coords(telemetry: Optional[dict], impact: Optional[dict]) -> tuple[
         ((telemetry.get("location") or {}).get("lat"), (telemetry.get("location") or {}).get("lng")),
         ((telemetry.get("coords") or {}).get("latitude"), (telemetry.get("coords") or {}).get("longitude")),
     ]
+
+    geo = telemetry.get("location") or telemetry.get("coords") or {}
+    coords = geo.get("coordinates") if isinstance(geo, dict) else None
+    if isinstance(coords, (list, tuple)) and len(coords) >= 2:
+        lng, lat = coords[0], coords[1]
+        if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
+            return float(lat), float(lng)
     for lat, lng in candidates:
         if isinstance(lat, (int, float)) and isinstance(lng, (int, float)):
             return float(lat), float(lng)
@@ -151,6 +158,9 @@ class MobileBridge:
             telemetry = await self._db.telemetry.find_one(
                 {"user_id": uid}, {"_id": 0}, sort=[("timestamp", -1)],
             )
+            live_location = await self._db.user_live_locations.find_one(
+                {"user_id": uid}, {"_id": 0}, sort=[("timestamp", -1)],
+            )
             recent_impact = await self._db.impact_events.find_one(
                 {
                     "user_id": uid,
@@ -162,7 +172,7 @@ class MobileBridge:
 
             telemetry_age: Optional[float] = None
             if telemetry:
-                ts = _parse_iso(telemetry.get("timestamp"))
+                ts = _parse_iso(telemetry.get("timestamp") or telemetry.get("ts"))
                 if ts:
                     telemetry_age = (now - ts).total_seconds()
 
@@ -184,7 +194,9 @@ class MobileBridge:
                 status = "offline"
 
             # GPS: robust extraction from telemetry formats + impact fallback
-            lat, lng = _extract_coords(telemetry, recent_impact)
+            lat, lng = _extract_coords(telemetry or live_location, recent_impact)
+            if lat is None or lng is None:
+                lat, lng = _extract_coords(live_location, recent_impact)
 
             # Speed: from telemetry if mobile sends it
             speed = (telemetry or {}).get("speed")
@@ -209,7 +221,7 @@ class MobileBridge:
                 "helmet_connected": telemetry_age is not None and telemetry_age < OFFLINE_AFTER_S,
                 "consent": True,
                 "status": status,
-                "last_update": (telemetry or {}).get("timestamp") or now.isoformat(),
+                "last_update": (telemetry or live_location or {}).get("timestamp") or now.isoformat(),
             }
 
         # Drop drivers that no longer exist as mobile users
