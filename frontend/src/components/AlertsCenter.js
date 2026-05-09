@@ -77,10 +77,14 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
 
   const active = useMemo(() => {
     const list = (alerts || []).filter((x) => x.status === "pending");
-    // newest first
-    return list.sort((a, b) =>
-      (b.created_at || "").localeCompare(a.created_at || ""),
-    );
+    const dedupByDriver = new Map();
+    list
+      .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""))
+      .forEach((a) => {
+        const key = a.driver_id || a.id;
+        if (!dedupByDriver.has(key)) dedupByDriver.set(key, a);
+      });
+    return [...dedupByDriver.values()];
   }, [alerts]);
 
   // Load extended history (filterable by days) from /api/impacts
@@ -130,7 +134,15 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
       setTab("history");
       // give the WS a moment to settle then refresh
       setTimeout(() => loadHistory(days), 400);
-    } catch (e) { console.error(formatApiError(e)); }
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, status: "acknowledged" } : a)));
+        setTab("history");
+        setTimeout(() => loadHistory(days), 300);
+        return;
+      }
+      console.error(formatApiError(e));
+    }
   };
 
   const falseAlarm = async (id) => {
@@ -139,7 +151,15 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
       setAlerts((prev) => prev.map((a) => (a.id === id ? data.alert : a)));
       setTab("history");
       setTimeout(() => loadHistory(days), 400);
-    } catch (e) { console.error(formatApiError(e)); }
+    } catch (e) {
+      if (e?.response?.status === 404) {
+        setAlerts((prev) => prev.map((a) => (a.id === id ? { ...a, status: "false_alarm" } : a)));
+        setTab("history");
+        setTimeout(() => loadHistory(days), 300);
+        return;
+      }
+      console.error(formatApiError(e));
+    }
   };
 
   return (

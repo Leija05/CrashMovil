@@ -356,8 +356,39 @@ class MobileBridge:
         prof["settings"] = settings
         return prof
 
+
+    async def _ensure_alert_cached(self, alert_id: str) -> Optional[dict]:
+        if alert_id in self.alerts:
+            return self.alerts[alert_id]
+        imp = await self._db.impact_events.find_one({"id": alert_id}, {"_id": 0})
+        if not imp:
+            return None
+        uid = imp.get("user_id")
+        loc = imp.get("location") or {}
+        alert = {
+            "id": imp.get("id"),
+            "driver_id": uid,
+            "driver_name": await self._user_name(uid),
+            "type": "impact",
+            "severity": imp.get("severity") or "high",
+            "severity_label": imp.get("severity_label"),
+            "lat": loc.get("latitude") if loc.get("latitude") is not None else loc.get("lat"),
+            "lng": loc.get("longitude") if loc.get("longitude") is not None else loc.get("lng"),
+            "gforce": imp.get("g_force"),
+            "speed": 0,
+            "status": "pending",
+            "created_at": imp.get("created_at"),
+            "ack_by": None,
+            "ack_by_name": None,
+            "ack_at": None,
+            "ai_diagnosis": imp.get("ai_diagnosis"),
+        }
+        self.alerts[alert_id] = alert
+        return alert
+
     async def acknowledge(self, alert_id: str, user: dict) -> Optional[dict]:
-        if alert_id not in self.alerts:
+        alert = await self._ensure_alert_cached(alert_id)
+        if not alert:
             return None
         now = datetime.now(timezone.utc).isoformat()
         await self._db.monitor_acks.update_one(
@@ -372,7 +403,7 @@ class MobileBridge:
             }},
             upsert=True,
         )
-        a = self.alerts[alert_id]
+        a = alert
         a["status"] = "acknowledged"
         a["ack_by"] = user["email"]
         a["ack_by_name"] = user.get("name") or user["email"]
@@ -381,7 +412,8 @@ class MobileBridge:
         return a
 
     async def false_alarm(self, alert_id: str, user: dict) -> Optional[dict]:
-        if alert_id not in self.alerts:
+        alert = await self._ensure_alert_cached(alert_id)
+        if not alert:
             return None
         now = datetime.now(timezone.utc).isoformat()
         await self._db.monitor_acks.update_one(
@@ -396,7 +428,7 @@ class MobileBridge:
             }},
             upsert=True,
         )
-        a = self.alerts[alert_id]
+        a = alert
         a["status"] = "false_alarm"
         a["ack_by"] = user["email"]
         a["ack_by_name"] = user.get("name") or user["email"]
