@@ -312,6 +312,14 @@ class MobileBridge:
         prof = await self._db.user_profiles.find_one(
             {"user_id": driver_id}, {"_id": 0}
         ) or {}
+        contacts = await self._db.emergency_contacts.find(
+            {"user_id": driver_id}, {"_id": 0}
+        ).to_list(50)
+        settings = await self._db.user_settings.find_one(
+            {"user_id": driver_id}, {"_id": 0}
+        ) or {}
+        prof["emergency_contacts"] = contacts
+        prof["settings"] = settings
         return prof
 
     async def acknowledge(self, alert_id: str, user: dict) -> Optional[dict]:

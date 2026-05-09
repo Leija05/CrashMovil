@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Bike, Bluetooth, BluetoothOff, History } from "lucide-react";
+import { Bike, Bluetooth, BluetoothOff, History, UserSquare } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const STATUS_TONE = {
@@ -9,7 +9,7 @@ const STATUS_TONE = {
   offline:  { dot: "bg-neutral-600",                                        text: "text-neutral-500", label: "Offline" },
 };
 
-export default function DriverList({ drivers, selectedId, onSelect }) {
+export default function DriverList({ drivers, selectedId, onSelect, onOpenDetail }) {
   const list = useMemo(() => {
     return Object.values(drivers || {}).sort((a, b) => {
       const order = { critical: 0, warning: 1, active: 2, offline: 3 };
@@ -90,14 +90,26 @@ export default function DriverList({ drivers, selectedId, onSelect }) {
                       {d.helmet_connected ? "Casco BT" : "Sin telemetría"}
                     </span>
                   </div>
-                  <Link
-                    to={`/history/${d.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] text-neutral-500 hover:text-white transition-colors"
-                    data-testid={`driver-history-${d.id}`}
-                  >
-                    <History className="h-3 w-3" /> Historial
-                  </Link>
+                  <div className="flex items-center gap-3">
+                    <button
+                      data-testid={`driver-detail-${d.id}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenDetail?.(d.id);
+                      }}
+                      className="flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] text-neutral-500 hover:text-emerald-400 transition-colors"
+                    >
+                      <UserSquare className="h-3 w-3" /> Ficha
+                    </button>
+                    <Link
+                      to={`/history/${d.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="flex items-center gap-1 text-[10px] uppercase tracking-[0.2em] text-neutral-500 hover:text-white transition-colors"
+                      data-testid={`driver-history-${d.id}`}
+                    >
+                      <History className="h-3 w-3" /> Historial
+                    </Link>
+                  </div>
                 </div>
               </button>
             );

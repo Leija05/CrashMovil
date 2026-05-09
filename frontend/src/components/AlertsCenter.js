@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BellOff, Check, Volume2, VolumeX } from "lucide-react";
+import { AlertTriangle, BellOff, Check, Volume2, VolumeX, UserSquare } from "lucide-react";
 import { api, formatApiError } from "../lib/api";
 import { playCriticalAlert, playAck } from "../lib/sound";
+import AlertDiagnosis from "./AlertDiagnosis";
 
 function timeAgo(iso) {
   if (!iso) return "—";
@@ -24,7 +25,7 @@ const STATUS_LABEL = {
   false_alarm: "Falsa Alarma",
 };
 
-export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelectDriver }) {
+export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelectDriver, onOpenDriverDetail }) {
   const [tab, setTab] = useState("active"); // active | history
   const [muted, setMuted] = useState(false);
   const lastPlayedRef = useRef(null);
@@ -179,6 +180,8 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
                     {a.ack_by ? `por ${a.ack_by}` : ""} {a.ack_at ? `· ${new Date(a.ack_at).toLocaleTimeString()}` : ""}
                   </div>
                 )}
+
+                <AlertDiagnosis diagnosis={a.ai_diagnosis} />
               </div>
             );
           })
