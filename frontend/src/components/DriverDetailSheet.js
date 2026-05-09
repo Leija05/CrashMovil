@@ -58,13 +58,18 @@ function ChipList({ items }) {
 }
 
 const STATUS_TONE = {
-  active:   { text: "text-emerald-400", label: "Activo" },
-  critical: { text: "text-red-400",     label: "Accidente" },
-  warning:  { text: "text-amber-400",   label: "Advertencia" },
-  offline:  { text: "text-neutral-500", label: "Offline" },
+  active: { text: "text-emerald-400", label: "Activo" },
+  critical: { text: "text-red-400", label: "Accidente" },
+  warning: { text: "text-amber-400", label: "Advertencia" },
+  offline: { text: "text-neutral-500", label: "Offline" },
 };
 
-export default function DriverDetailSheet({ driverId, open, onOpenChange, driver }) {
+export default function DriverDetailSheet({
+  driverId,
+  open,
+  onOpenChange,
+  driver,
+}) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -90,7 +95,7 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full sm:max-w-lg bg-[#0d0d0f] border-l border-white/10 text-white overflow-y-auto p-0"
+        className="w-full sm:max-w-xl bg-[#0d0d0f] border-l border-white/10 text-white overflow-y-auto p-0 shadow-[0_0_60px_rgba(0,0,0,0.65)]"
         data-testid="driver-detail-sheet"
       >
         <div className="sticky top-0 z-10 bg-[#0d0d0f]/95 backdrop-blur-xl border-b border-white/10 px-6 py-5">
@@ -107,26 +112,38 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
                   {driver?.email || driverId}
                 </SheetDescription>
               </div>
-              <div className={`text-[10px] font-mono uppercase tracking-[0.2em] ${tone.text}`}>
+              <div
+                className={`text-[10px] font-mono uppercase tracking-[0.2em] ${tone.text}`}
+              >
                 {tone.label}
               </div>
             </div>
             {driver ? (
               <div className="grid grid-cols-3 gap-2 mt-4">
                 <div className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
-                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">Vel.</div>
+                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                    Vel.
+                  </div>
                   <div className="font-mono text-sm">
-                    {typeof driver.speed === "number" ? `${Math.round(driver.speed)} km/h` : "—"}
+                    {typeof driver.speed === "number"
+                      ? `${Math.round(driver.speed)} km/h`
+                      : "—"}
                   </div>
                 </div>
                 <div className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
-                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">G-Force</div>
+                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                    G-Force
+                  </div>
                   <div className="font-mono text-sm">
-                    {typeof driver.gforce === "number" ? `${driver.gforce.toFixed(2)}G` : "—"}
+                    {typeof driver.gforce === "number"
+                      ? `${driver.gforce.toFixed(2)}G`
+                      : "—"}
                   </div>
                 </div>
                 <div className="rounded-lg border border-white/10 bg-white/5 px-2.5 py-2">
-                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">Batería</div>
+                  <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                    Batería
+                  </div>
                   <div className="font-mono text-sm">
                     {driver.battery != null ? `${driver.battery}%` : "—"}
                   </div>
@@ -150,11 +167,17 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
               <Section icon={User} label="Perfil médico">
                 <div className="grid grid-cols-2 gap-3 text-sm">
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">Nombre</div>
-                    <div className="text-white">{profile.full_name || driver?.name || "—"}</div>
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+                      Nombre
+                    </div>
+                    <div className="text-white">
+                      {profile.full_name || driver?.name || "—"}
+                    </div>
                   </div>
                   <div>
-                    <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">Tipo de sangre</div>
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+                      Tipo de sangre
+                    </div>
                     <div className="font-mono text-emerald-400 font-bold text-base">
                       {profile.blood_type || "—"}
                     </div>
@@ -162,11 +185,23 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
                 </div>
               </Section>
 
-              <Section icon={AlertTriangle} label="Alergias" tone={(profile.allergies || []).length ? "danger" : "default"}>
+              <Section
+                icon={AlertTriangle}
+                label="Alergias"
+                tone={(profile.allergies || []).length ? "danger" : "default"}
+              >
                 <ChipList items={profile.allergies} />
               </Section>
 
-              <Section icon={Heart} label="Condiciones médicas" tone={(profile.medical_conditions || []).length ? "danger" : "default"}>
+              <Section
+                icon={Heart}
+                label="Condiciones médicas"
+                tone={
+                  (profile.medical_conditions || []).length
+                    ? "danger"
+                    : "default"
+                }
+              >
                 <ChipList items={profile.medical_conditions} />
               </Section>
 
@@ -182,9 +217,14 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
                 </Section>
               ) : null}
 
-              <Section icon={Phone} label={`Contactos de emergencia · ${contacts.length}`}>
+              <Section
+                icon={Phone}
+                label={`Contactos de emergencia · ${contacts.length}`}
+              >
                 {contacts.length === 0 ? (
-                  <div className="text-xs text-neutral-500 italic">Sin contactos registrados</div>
+                  <div className="text-xs text-neutral-500 italic">
+                    Sin contactos registrados
+                  </div>
                 ) : (
                   <div className="space-y-2">
                     {contacts.map((c) => (
@@ -193,8 +233,12 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
                         className="rounded-lg border border-white/10 bg-white/[0.03] p-3 flex items-center justify-between gap-3"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="text-sm font-medium truncate">{c.name}</div>
-                          <div className="font-mono text-xs text-neutral-400 truncate">{c.phone}</div>
+                          <div className="text-sm font-medium truncate">
+                            {c.name}
+                          </div>
+                          <div className="font-mono text-xs text-neutral-400 truncate">
+                            {c.phone}
+                          </div>
                           {c.relationship ? (
                             <div className="text-[10px] uppercase tracking-[0.2em] text-neutral-500 mt-0.5">
                               {c.relationship}
@@ -229,20 +273,30 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
                 <Section icon={ShieldCheck} label="Configuración del conductor">
                   <div className="grid grid-cols-3 gap-2 text-xs">
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">Umbral G</div>
+                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                        Umbral G
+                      </div>
                       <div className="font-mono text-emerald-400">
                         {settings.alert_threshold ?? "—"}G
                       </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">Auto llamada</div>
-                      <div className={`font-mono ${settings.auto_call ? "text-emerald-400" : "text-neutral-500"}`}>
+                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                        Auto llamada
+                      </div>
+                      <div
+                        className={`font-mono ${settings.auto_call ? "text-emerald-400" : "text-neutral-500"}`}
+                      >
                         {settings.auto_call ? "ON" : "OFF"}
                       </div>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
-                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">WhatsApp</div>
-                      <div className={`font-mono ${settings.auto_whatsapp ? "text-emerald-400" : "text-neutral-500"}`}>
+                      <div className="text-[9px] uppercase tracking-[0.25em] text-neutral-500">
+                        WhatsApp
+                      </div>
+                      <div
+                        className={`font-mono ${settings.auto_whatsapp ? "text-emerald-400" : "text-neutral-500"}`}
+                      >
                         {settings.auto_whatsapp ? "ON" : "OFF"}
                       </div>
                     </div>
@@ -252,8 +306,13 @@ export default function DriverDetailSheet({ driverId, open, onOpenChange, driver
 
               <Section icon={Mail} label="Identificadores">
                 <div className="font-mono text-[11px] text-neutral-400 space-y-1 break-all">
-                  <div><span className="text-neutral-600">id:</span> {driverId}</div>
-                  <div><span className="text-neutral-600">email:</span> {driver?.email || "—"}</div>
+                  <div>
+                    <span className="text-neutral-600">id:</span> {driverId}
+                  </div>
+                  <div>
+                    <span className="text-neutral-600">email:</span>{" "}
+                    {driver?.email || "—"}
+                  </div>
                 </div>
               </Section>
             </>

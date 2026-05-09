@@ -1,7 +1,12 @@
 import { ShieldAlert, LogOut, Wifi, WifiOff, History } from "lucide-react";
+import CrashStatsWidget from "./CrashStatsWidget";
 import { useAuth } from "../auth/AuthContext";
 
-const STATUS_LABEL = { connecting: "Conectando", open: "En vivo", closed: "Reconectando" };
+const STATUS_LABEL = {
+  connecting: "Conectando",
+  open: "En vivo",
+  closed: "Reconectando",
+};
 
 export default function Topbar({ status, alertCount, onOpenHistory }) {
   const { user, logout } = useAuth();
@@ -13,12 +18,19 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
           <ShieldAlert className="h-4 w-4 text-emerald-400" />
         </div>
         <div className="leading-tight">
-          <div className="text-[9px] uppercase tracking-[0.4em] text-neutral-500">Critical Response Alert System</div>
-          <div className="font-bold tracking-tight">C.R.A.S.H. <span className="text-emerald-400">2.0</span> · Command Center</div>
+          <div className="text-[9px] uppercase tracking-[0.4em] text-neutral-500">
+            Critical Response Alert System
+          </div>
+          <div className="font-bold tracking-tight">
+            C.R.A.S.H. <span className="text-emerald-400">2.0</span> · Command
+            Center
+          </div>
         </div>
       </div>
 
       <div className="hidden md:flex items-center gap-3">
+        <CrashStatsWidget />
+
         <button
           data-testid="open-crash-history"
           onClick={onOpenHistory}
@@ -37,7 +49,11 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
               : "border-amber-500/30 bg-amber-500/10 text-amber-300"
           }`}
         >
-          {status === "open" ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+          {status === "open" ? (
+            <Wifi className="h-3 w-3" />
+          ) : (
+            <WifiOff className="h-3 w-3" />
+          )}
           {STATUS_LABEL[status] || status}
         </div>
 
@@ -46,7 +62,8 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
             data-testid="alert-count"
             className="px-3 py-1.5 rounded-lg border border-red-500/40 bg-red-500/10 text-red-400 text-[10px] uppercase tracking-[0.25em] alert-flashing"
           >
-            {alertCount} alerta{alertCount > 1 ? "s" : ""} crítica{alertCount > 1 ? "s" : ""}
+            {alertCount} alerta{alertCount > 1 ? "s" : ""} crítica
+            {alertCount > 1 ? "s" : ""}
           </div>
         ) : null}
 
@@ -54,7 +71,9 @@ export default function Topbar({ status, alertCount, onOpenHistory }) {
           <div className="flex items-center gap-2 pl-3 border-l border-white/10">
             <div className="text-right leading-tight">
               <div className="text-sm font-medium">{user.name}</div>
-              <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">{user.role}</div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-neutral-500">
+                {user.role}
+              </div>
             </div>
             <button
               data-testid="logout-btn"

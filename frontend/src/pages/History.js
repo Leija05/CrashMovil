@@ -30,7 +30,7 @@ function fmt(iso) {
 const SEVERITY_TONE = {
   critical: "border-red-500/50 bg-red-500/15 text-red-300",
   critico: "border-red-500/50 bg-red-500/15 text-red-300",
-  "crítico": "border-red-500/50 bg-red-500/15 text-red-300",
+  crítico: "border-red-500/50 bg-red-500/15 text-red-300",
   high: "border-red-500/40 bg-red-500/10 text-red-300",
   alto: "border-red-500/40 bg-red-500/10 text-red-300",
   medium: "border-amber-500/40 bg-amber-500/10 text-amber-300",
@@ -41,7 +41,10 @@ const SEVERITY_TONE = {
 
 function severityTone(sev) {
   if (!sev) return "border-white/10 bg-white/5 text-neutral-300";
-  return SEVERITY_TONE[String(sev).toLowerCase()] || "border-white/10 bg-white/5 text-neutral-300";
+  return (
+    SEVERITY_TONE[String(sev).toLowerCase()] ||
+    "border-white/10 bg-white/5 text-neutral-300"
+  );
 }
 
 // Child component that pans the map to the selected impact location.
@@ -93,7 +96,9 @@ export default function History() {
     };
   }, [driverId]);
 
-  const path = points.map((p) => [p.lat, p.lng]).filter(([a, b]) => a != null && b != null);
+  const path = points
+    .map((p) => [p.lat, p.lng])
+    .filter(([a, b]) => a != null && b != null);
 
   const eventsWithGps = useMemo(
     () => events.filter((e) => e.lat != null && e.lng != null),
@@ -105,14 +110,16 @@ export default function History() {
     [events, selectedEventId],
   );
 
-  const flyTarget = selectedEvent && selectedEvent.lat && selectedEvent.lng
-    ? [selectedEvent.lat, selectedEvent.lng]
-    : null;
+  const flyTarget =
+    selectedEvent && selectedEvent.lat && selectedEvent.lng
+      ? [selectedEvent.lat, selectedEvent.lng]
+      : null;
 
-  const center = flyTarget
-    || path[Math.floor(path.length / 2)]
-    || (eventsWithGps[0] ? [eventsWithGps[0].lat, eventsWithGps[0].lng] : null)
-    || [profile?.lat || 19.4326, profile?.lng || -99.1332];
+  const center = flyTarget ||
+    path[Math.floor(path.length / 2)] ||
+    (eventsWithGps[0]
+      ? [eventsWithGps[0].lat, eventsWithGps[0].lng]
+      : null) || [profile?.lat || 19.4326, profile?.lng || -99.1332];
 
   const handleSelectEvent = (ev) => {
     if (!ev) return;
@@ -132,7 +139,7 @@ export default function History() {
   const hasMapContent = path.length > 0 || eventsWithGps.length > 0;
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white p-4 lg:p-6 flex flex-col gap-4">
+    <div className="min-h-screen lg:h-screen bg-[#0A0A0A] text-white p-4 lg:p-6 flex flex-col gap-4 lg:overflow-hidden">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Link
@@ -152,7 +159,9 @@ export default function History() {
             </h1>
             <div className="font-mono text-xs text-neutral-400 mt-0.5">
               {profile?.id} · {profile?.vehicle} · {profile?.plate}
-              {profile?.email ? <span className="text-neutral-500"> · {profile.email}</span> : null}
+              {profile?.email ? (
+                <span className="text-neutral-500"> · {profile.email}</span>
+              ) : null}
             </div>
           </div>
         </div>
@@ -161,10 +170,12 @@ export default function History() {
             <span className="font-mono text-white">{points.length}</span> puntos
           </div>
           <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2">
-            <span className="font-mono text-white">{events.length}</span> eventos
+            <span className="font-mono text-white">{events.length}</span>{" "}
+            eventos
           </div>
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 text-red-300 px-3 py-2">
-            <span className="font-mono">{eventsWithGps.length}</span> impactos geolocalizados
+            <span className="font-mono">{eventsWithGps.length}</span> impactos
+            geolocalizados
           </div>
         </div>
       </div>
@@ -178,7 +189,7 @@ export default function History() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
         <div
           data-testid="history-map"
-          className="lg:col-span-2 rounded-2xl border border-white/10 overflow-hidden min-h-[420px] relative"
+          className="lg:col-span-2 rounded-2xl border border-white/10 overflow-hidden h-[50vh] min-h-[360px] lg:h-auto lg:min-h-0 relative"
         >
           {hasMapContent ? (
             <MapContainer
@@ -188,7 +199,7 @@ export default function History() {
               style={{ background: "#0a0a0a", height: "100%" }}
             >
               <TileLayer
-                attribution='&copy; carto.com'
+                attribution="&copy; carto.com"
                 url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
               />
               {path.length > 1 ? (
@@ -244,7 +255,10 @@ export default function History() {
                         <div style={{ fontWeight: 600, marginTop: 2 }}>
                           {profile?.name || driverId}
                         </div>
-                        <div className="font-mono text-xs" style={{ marginTop: 4 }}>
+                        <div
+                          className="font-mono text-xs"
+                          style={{ marginTop: 4 }}
+                        >
                           {e.gforce?.toFixed?.(2) || "—"}G
                           {e.severity_label || e.severity ? (
                             <span style={{ marginLeft: 6, opacity: 0.8 }}>
@@ -252,14 +266,26 @@ export default function History() {
                             </span>
                           ) : null}
                         </div>
-                        <div className="text-[10px] text-neutral-500" style={{ marginTop: 2 }}>
+                        <div
+                          className="text-[10px] text-neutral-500"
+                          style={{ marginTop: 2 }}
+                        >
                           {fmt(e.ts)}
                         </div>
-                        <div className="text-[10px] font-mono text-neutral-500" style={{ marginTop: 2 }}>
+                        <div
+                          className="text-[10px] font-mono text-neutral-500"
+                          style={{ marginTop: 2 }}
+                        >
                           {e.lat.toFixed(5)}, {e.lng.toFixed(5)}
                         </div>
                         {e.ai_diagnosis?.severity_assessment ? (
-                          <div style={{ marginTop: 6, fontSize: 11, color: "#d4d4d4" }}>
+                          <div
+                            style={{
+                              marginTop: 6,
+                              fontSize: 11,
+                              color: "#d4d4d4",
+                            }}
+                          >
                             {e.ai_diagnosis.severity_assessment}
                           </div>
                         ) : null}
@@ -284,14 +310,17 @@ export default function History() {
                 <span className="text-red-300">Impacto seleccionado:</span>{" "}
                 <span className="text-white">{fmt(selectedEvent.ts)}</span>
                 {selectedEvent.gforce ? (
-                  <span className="text-neutral-300"> · {selectedEvent.gforce.toFixed(2)}G</span>
+                  <span className="text-neutral-300">
+                    {" "}
+                    · {selectedEvent.gforce.toFixed(2)}G
+                  </span>
                 ) : null}
               </div>
             </div>
           ) : null}
         </div>
 
-        <aside className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-2xl p-5 flex flex-col min-h-0">
+        <aside className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-2xl p-5 flex flex-col min-h-[360px] lg:min-h-0">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-[11px] uppercase tracking-[0.3em] text-neutral-400">
               Historial de impactos · {events.length}
@@ -360,7 +389,9 @@ export default function History() {
 
                     <div className="mt-1.5 flex items-center gap-2 text-[11px] text-neutral-200">
                       <UserIcon className="h-3 w-3 text-neutral-400" />
-                      <span className="font-medium">{profile?.name || driverId}</span>
+                      <span className="font-medium">
+                        {profile?.name || driverId}
+                      </span>
                     </div>
 
                     <div className="font-mono text-xs mt-1.5 flex items-center gap-3 flex-wrap">
