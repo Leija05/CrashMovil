@@ -11,7 +11,7 @@ try:
 except ImportError:
     websockets = None
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://crash-monitor-7.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://crash-locator.preview.emergentagent.com").rstrip("/")
 WS_URL = BASE_URL.replace("https://", "wss://").replace("http://", "ws://") + "/api/ws"
 
 ADMIN = {"email": "admin@crash.io", "password": "admin123"}

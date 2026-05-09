@@ -101,3 +101,53 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Al seleccionar el historial de accidentes mostrar un punto donde fue el accidente; el historial debe mostrarse desde la colección impact_events que registra la app móvil con los datos, el diagnóstico AI y de quién fue el impacto."
+
+backend:
+  - task: "GET /api/drivers/{id}/events returns impact_events with ai_diagnosis, severity_label, alerts_sent, location"
+    implemented: true
+    working: true
+    file: "backend/mobile_bridge.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Bridge.driver_events already normalises impact_events: id, severity, severity_label, lat, lng, gforce, ts, ai_diagnosis, alerts_sent. Verified via seed_mobile_demo.py — Diego has one pending impact with full ai_diagnosis structure (severity_assessment, possible_injuries, first_aid_steps, emergency_recommendations, priority_level)."
+      - working: true
+        agent: "testing"
+        comment: "✅ BACKEND TEST PASSED. Tested GET /api/drivers/{diego_id}/events endpoint with Diego Salas (ID: 69ff824137ef06dd57eaf0f9). Response validated: 1 impact event found with complete structure - id (uuid), type=impact, severity=high, severity_label=Alto, lat=19.449, lng=-99.1276, gforce=7.4, speed=0, ts (ISO), alerts_sent=true, ai_diagnosis dict with all required subkeys (severity_assessment, possible_injuries, first_aid_steps, emergency_recommendations, priority_level). Also verified GET /api/drivers/{diego_id}/history returns 1 telemetry point with correct structure. All validations passed."
+
+frontend:
+  - task: "History page — clickable impact cards fly the map to the accident point, show AI diagnosis and impacted rider"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/History.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Rewrote History.js: added selectedEventId state, MapFlyTo helper using useMap, halo CircleMarker on selected, clickable event cards (cursor-pointer divs to allow nested AlertDiagnosis button), severity tone, alerts_sent badge, driver name/email in header and popup, auto-select most recent geo-located impact on load, scroll-into-view for selected card. Verified visually with seeded Diego impact — popup, polyline halo, AI diagnosis collapsible, all data renders correctly."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.2"
+  test_sequence: 2
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "GET /api/drivers/{id}/events returns impact_events with ai_diagnosis, severity_label, alerts_sent, location"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Frontend history feature implemented and visually validated against seeded Diego Salas impact. Please run a focused backend test on GET /api/drivers/{driver_id}/events to confirm the response shape (id, type=impact, severity, severity_label, lat, lng, gforce, speed, ts, ai_diagnosis dict with severity_assessment/possible_injuries/first_aid_steps/emergency_recommendations/priority_level, alerts_sent boolean). Use admin@crash.io / admin123 to obtain JWT, then call /api/drivers (pick Diego's id) → /api/drivers/{diego_id}/events. Backend runs LIVE mode (DEMO_MODE=false) reading mobile DB crash_database.impact_events. Seed script already executed."
+  - agent: "testing"
+    message: "✅ Backend testing completed successfully. All endpoints working as expected. GET /api/drivers/{id}/events returns properly structured impact events with complete ai_diagnosis. GET /api/drivers/{id}/history returns telemetry points. Diego Salas impact event validated with all required fields present and correct types. No critical issues found. Backend implementation is solid and ready for production."
