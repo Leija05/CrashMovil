@@ -1,0 +1,152 @@
+{
+  "theme": "dark",
+  "archetype": "Archetype 2: The Performance Pro (Command Center / Tactical Minimalism)",
+  "design_philosophy": "Mission-critical, high-tech, and trustworthy. The interface must feel like a modern SOC (Security Operations Center) or high-end telemetry dashboard. Uses a strict Bento Grid layout with crystal glassmorphism surfaces over deep obsidian backgrounds to highlight critical safety alerts. Every color choice is semantic (Active, Accident, Offline, Warning).",
+  "typography": {
+    "fonts": {
+      "headings": "Chivo",
+      "body": "IBM Plex Sans",
+      "mono_data": "JetBrains Mono"
+    },
+    "hierarchy": {
+      "h1": "text-3xl sm:text-4xl font-bold tracking-tight text-white",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight text-white/90",
+      "h3": "text-xl font-medium tracking-tight text-white/80",
+      "h4": "text-lg font-medium text-white/80",
+      "body": "text-sm sm:text-base leading-relaxed text-neutral-300",
+      "labels": "text-xs font-semibold uppercase tracking-[0.2em] text-neutral-400",
+      "telemetry_value": "font-mono text-3xl sm:text-4xl lg:text-5xl font-bold text-white tracking-tighter"
+    },
+    "rules": [
+      "Use JetBrains Mono specifically for all telemetry data (Speed, G-Force, GPS coordinates) to reinforce the technical/precision feel.",
+      "Never use Inter or Roboto for headings or body.",
+      "Overlines and small headers must be uppercase with wide tracking (tracking-[0.2em])."
+    ]
+  },
+  "colors": {
+    "background": {
+      "app": "bg-[#0A0A0A]",
+      "panel_glass": "bg-white/5",
+      "panel_solid": "bg-neutral-900"
+    },
+    "borders": {
+      "default": "border-white/10",
+      "focus": "border-white/30",
+      "active": "border-emerald-500/50"
+    },
+    "text": {
+      "primary": "text-white",
+      "secondary": "text-neutral-400",
+      "muted": "text-neutral-500"
+    },
+    "semantic": {
+      "active_green": {
+        "text": "text-emerald-400",
+        "bg": "bg-emerald-500/10",
+        "border": "border-emerald-500/20",
+        "glow": "shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+      },
+      "critical_red": {
+        "text": "text-red-500",
+        "bg": "bg-red-500/10",
+        "border": "border-red-500/30",
+        "glow": "shadow-[0_0_20px_rgba(239,68,68,0.5)]"
+      },
+      "warning_amber": {
+        "text": "text-amber-500",
+        "bg": "bg-amber-500/10",
+        "border": "border-amber-500/20"
+      },
+      "offline_gray": {
+        "text": "text-neutral-500",
+        "bg": "bg-white/5",
+        "border": "border-white/10"
+      }
+    }
+  },
+  "surfaces": {
+    "glassmorphism": {
+      "classes": "bg-white/5 backdrop-blur-2xl border border-white/10 shadow-[0_8px_32px_rgba(0,0,0,0.3)] rounded-2xl",
+      "usage": "Use for all Bento Grid telemetry cards, the Critical Alerts Center, and the Sidebar List."
+    },
+    "map_overlay_glass": {
+      "classes": "bg-black/40 backdrop-blur-xl border border-white/10 shadow-lg rounded-xl",
+      "usage": "Use for floating controls or legends directly over the Leaflet map."
+    },
+    "interactive_card": {
+      "classes": "bg-white/5 hover:bg-white/10 backdrop-blur-xl border border-white/10 hover:border-white/20 transition-all duration-300 rounded-xl cursor-pointer"
+    }
+  },
+  "layout": {
+    "grid_system": "Bento Grid Protocol (Control Room Mode)",
+    "container": "h-screen w-full flex overflow-hidden bg-[#0A0A0A] p-2 sm:p-4 gap-4",
+    "sidebar": "w-full max-w-sm flex-shrink-0 flex flex-col gap-4",
+    "main_content": "flex-1 flex flex-col gap-4 min-w-0",
+    "bento_grid": {
+      "classes": "grid grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-4 h-full",
+      "map_span": "col-span-full lg:col-span-8 row-span-4 rounded-2xl overflow-hidden border border-white/10 relative",
+      "alerts_span": "col-span-full lg:col-span-4 row-span-4 flex flex-col gap-4",
+      "telemetry_row": "col-span-full lg:col-span-12 grid grid-cols-2 md:grid-cols-4 gap-4 h-48"
+    },
+    "spacing": "Use tight gaps (gap-4) for the Control Room density. Internal padding for bento cards should be p-5 or p-6."
+  },
+  "motion": {
+    "hover": "transition-all duration-300 ease-out",
+    "alerts": "animate-pulse for critical red alerts, drawing immediate attention to the operator.",
+    "list_items": "staggered entrance animations for driver list and alert history."
+  },
+  "components": {
+    "map": {
+      "library": "Leaflet (react-leaflet)",
+      "tile_layer": "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+      "attribution": "&copy; <a href='https://carto.com/'>carto.com</a>",
+      "markers": "Use custom HTML markers with glowing pulses matching semantic colors (Green/Red/Gray)."
+    },
+    "critical_alert_center": {
+      "behavior": "Visual pulsing red border + sound cue (simulated or actual Audio API). Needs 'Acknowledge' and 'Mark as False Alarm' actions."
+    },
+    "buttons": {
+      "primary": "bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg px-4 py-2 transition-colors",
+      "danger": "bg-red-500/20 hover:bg-red-500/30 text-red-500 border border-red-500/50 rounded-lg px-4 py-2 transition-all shadow-[0_0_15px_rgba(239,68,68,0.2)]",
+      "outline": "bg-transparent border border-white/20 hover:border-white/40 text-white rounded-lg px-4 py-2 transition-colors"
+    },
+    "telemetry_card": {
+      "structure": "Label (Overline) -> Main Value (Mono) -> Sub-metric / Trend (e.g. 'Stable', '+2.4G')."
+    }
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1558981285-6f0c94958bb6?w=2000&q=80",
+        "description": "Dark, moody high-tech motorcycle helmet context image",
+        "category": "login_background"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1558981403-c5f9899a28bc?w=800&q=80",
+        "description": "Biker portrait with helmet on",
+        "category": "driver_avatar_placeholder_1"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1558981806-ec527fa84c39?w=800&q=80",
+        "description": "Motorcycle rider in gear",
+        "category": "driver_avatar_placeholder_2"
+      }
+    ]
+  },
+  "testing": {
+    "rules": [
+      "All interactive elements MUST have data-testid attributes.",
+      "Examples: data-testid='driver-list-item', data-testid='telemetry-gforce', data-testid='alert-acknowledge-btn'"
+    ]
+  },
+  "instructions_to_main_agent": [
+    "Build the dashboard using pure React + Tailwind CSS + Lucide Icons.",
+    "Implement the layout strictly as a Bento Grid. No standard boring bootstrap columns.",
+    "Use react-leaflet for the map with the provided CartoDB Dark Matter tile layer to ensure it matches the dark theme.",
+    "Simulate real-time WebSocket updates via a `useEffect` interval that slightly randomly modifies speed/G-force and triggers an occasional 'Accident/Impact' alert to demonstrate the Critical Alert Center.",
+    "Include an audio alert (using browser Audio API or just a visual simulated pulse) when an impact is registered.",
+    "Ensure 'Glassmorphism' is achieved cleanly: `bg-white/5 backdrop-blur-2xl border border-white/10`. Do not use opaque grays.",
+    "Use the specific fonts: Chivo for headings, IBM Plex Sans for body, JetBrains Mono for telemetry numbers.",
+    "Add standard data-testids to the main interactive pieces."
+  ]
+}
