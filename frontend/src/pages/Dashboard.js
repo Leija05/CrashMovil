@@ -5,6 +5,7 @@ import DriverList from "../components/DriverList";
 import TelemetryBento from "../components/TelemetryBento";
 import AlertsCenter from "../components/AlertsCenter";
 import DriverDetailSheet from "../components/DriverDetailSheet";
+import CrashHistoryModal from "../components/CrashHistoryModal";
 import { useCrashSocket } from "../lib/ws";
 
 export default function Dashboard() {
@@ -12,6 +13,7 @@ export default function Dashboard() {
   const [selectedId, setSelectedId] = useState(null);
   const [detailId, setDetailId] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const driverList = Object.values(drivers || {});
   const selected = useMemo(() => {
@@ -29,7 +31,11 @@ export default function Dashboard() {
 
   return (
     <div className="h-screen w-full p-3 lg:p-4 flex flex-col gap-3 lg:gap-4 overflow-hidden bg-[#0A0A0A]">
-      <Topbar status={status} alertCount={activeAlertCount} />
+      <Topbar
+        status={status}
+        alertCount={activeAlertCount}
+        onOpenHistory={() => setHistoryOpen(true)}
+      />
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-3 lg:gap-4 min-h-0">
         <aside className="lg:col-span-3 rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-2xl p-4 min-h-0 flex flex-col">
@@ -72,6 +78,11 @@ export default function Dashboard() {
         driver={detailId ? drivers[detailId] : null}
         open={sheetOpen}
         onOpenChange={setSheetOpen}
+      />
+
+      <CrashHistoryModal
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
       />
     </div>
   );

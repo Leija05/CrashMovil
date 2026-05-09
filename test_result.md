@@ -102,7 +102,7 @@
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
 
-user_problem_statement: "Al seleccionar el historial de accidentes mostrar un punto donde fue el accidente; el historial debe mostrarse desde la colección impact_events que registra la app móvil con los datos, el diagnóstico AI y de quién fue el impacto."
+user_problem_statement: "Restructurar página: al atender un choque, ir al historial de atendidos mostrando quién atendió (nombre + correo), gravedad, G-Force y diagnóstico AI. Filtro de días + nuevas alertas arriba. Botón 'Historial de choques' que abre modal con mapa (puntos rojos=no atendidos, verdes=atendidos), sidebar con todos los choques, sincronización bidireccional mapa↔sidebar, filtros personalizados por fecha/gravedad/nombre, click en usuario despliega info+diagnóstico."
 
 backend:
   - task: "GET /api/drivers/{id}/events returns impact_events with ai_diagnosis, severity_label, alerts_sent, location"
@@ -114,40 +114,90 @@ backend:
     needs_retesting: false
     status_history:
       - working: true
-        agent: "main"
-        comment: "Bridge.driver_events already normalises impact_events: id, severity, severity_label, lat, lng, gforce, ts, ai_diagnosis, alerts_sent. Verified via seed_mobile_demo.py — Diego has one pending impact with full ai_diagnosis structure (severity_assessment, possible_injuries, first_aid_steps, emergency_recommendations, priority_level)."
-      - working: true
         agent: "testing"
-        comment: "✅ BACKEND TEST PASSED. Tested GET /api/drivers/{diego_id}/events endpoint with Diego Salas (ID: 69ff824137ef06dd57eaf0f9). Response validated: 1 impact event found with complete structure - id (uuid), type=impact, severity=high, severity_label=Alto, lat=19.449, lng=-99.1276, gforce=7.4, speed=0, ts (ISO), alerts_sent=true, ai_diagnosis dict with all required subkeys (severity_assessment, possible_injuries, first_aid_steps, emergency_recommendations, priority_level). Also verified GET /api/drivers/{diego_id}/history returns 1 telemetry point with correct structure. All validations passed."
+        comment: "✅ BACKEND TEST PASSED. Tested GET /api/drivers/{diego_id}/events endpoint. All validations passed."
 
-frontend:
-  - task: "History page — clickable impact cards fly the map to the accident point, show AI diagnosis and impacted rider"
+  - task: "GET /api/impacts global query with filters (q, severity, status, date_from/to, days)"
     implemented: true
     working: true
-    file: "frontend/src/pages/History.js"
+    file: "backend/server.py + backend/mobile_bridge.py"
     stuck_count: 0
     priority: "high"
     needs_retesting: false
     status_history:
       - working: true
         agent: "main"
-        comment: "Rewrote History.js: added selectedEventId state, MapFlyTo helper using useMap, halo CircleMarker on selected, clickable event cards (cursor-pointer divs to allow nested AlertDiagnosis button), severity tone, alerts_sent badge, driver name/email in header and popup, auto-select most recent geo-located impact on load, scroll-into-view for selected card. Verified visually with seeded Diego impact — popup, polyline halo, AI diagnosis collapsible, all data renders correctly."
+        comment: "Added bridge.query_impacts() and /api/impacts endpoint. Joins impact_events with monitor_acks. Supports q, severity, status (pending|acknowledged|false_alarm|all), date_from, date_to, days, limit. Validated visually that 14 seeded events render correctly with all filters."
+      - working: true
+        agent: "testing"
+        comment: "✅ BACKEND TEST PASSED. Comprehensive filter testing completed. All 11 filter tests passed: (1) no params returns correct JSON shape with all required fields, (2) status=pending filter works, (3) status=acknowledged filter works, (4) status=false_alarm filter works, (5) severity=critical filter works (case-insensitive), (6) severity=high filter works, (7) days=3 filter works, (8) date_from/date_to range filter works, (9) q=Diego name search works (case-insensitive), (10) q=salas partial match works, (11) combined filters (status+severity+days) work correctly. Minor: Found 1 legacy acknowledged impact (ID: 542cb0f9-2327-45cd-b8f3-8e66342eb0ee) with null ack_by_name from before feature was implemented - not a bug, just old data."
+
+  - task: "Acknowledge / false_alarm now persist ack_by_name (operator full name)"
+    implemented: true
+    working: true
+    file: "backend/mobile_bridge.py + backend/simulator.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "monitor_acks doc now stores ack_by_name. Verified end-to-end: alert sees 'Atendido por Monitorista (monitor@crash.io)' after click."
+      - working: true
+        agent: "testing"
+        comment: "✅ BACKEND TEST PASSED. Tested POST /api/alerts/{id}/acknowledge and POST /api/alerts/{id}/false-alarm with both monitor@crash.io and admin@crash.io. Created fresh pending impacts via MongoDB, polled GET /api/alerts until they appeared, then acknowledged/false-alarmed them. Validated: (1) monitor acknowledge: ack_by_name='Monitorista', ack_by='monitor@crash.io', status='acknowledged', (2) admin false-alarm: ack_by_name='Administrador', ack_by='admin@crash.io', status='false_alarm'. Both endpoints correctly persist operator's full name from user.name field."
+
+frontend:
+  - task: "AlertsCenter — auto-jump to HISTORIAL on Atender + day filter (1/3/7/14/30) + newest-first ordering + operator name/email + AI diagnosis"
+    implemented: true
+    working: true
+    file: "frontend/src/components/AlertsCenter.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Clicking Atender posts ack and switches active tab to 'history'. History tab fetches /api/impacts with selectable days (1/3/7/14/30), sorted newest first. Shows status badge, severity badge, ack_by_name, ack_by email, ack timestamp, gforce, AI diagnosis. Validated visually."
+
+  - task: "Topbar 'Historial de Choques' button"
+    implemented: true
+    working: true
+    file: "frontend/src/components/Topbar.js"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Added History icon button in topbar that opens CrashHistoryModal."
+
+  - task: "CrashHistoryModal — full-screen modal with map (red=pending, green=ack, gray=false_alarm), bidirectional map↔sidebar, custom filters (name/date_from/date_to/severity/status)"
+    implemented: true
+    working: true
+    file: "frontend/src/components/CrashHistoryModal.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+      - working: true
+        agent: "main"
+        comment: "Map with status-coloured CircleMarkers, halo on selected, MapFlyTo helper. Sidebar with filter bar (date range, severity, status, name search). Click marker → highlights/scrolls sidebar; click row → flyTo + opens popup + expands AI diagnosis. Validated visually with 14 seeded events: filter by name=Diego works, filter critical+acknowledged works, expand row shows diagnosis."
 
 metadata:
   created_by: "main_agent"
-  version: "1.2"
-  test_sequence: 2
+  version: "2.0"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "GET /api/drivers/{id}/events returns impact_events with ai_diagnosis, severity_label, alerts_sent, location"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
   - agent: "main"
-    message: "Frontend history feature implemented and visually validated against seeded Diego Salas impact. Please run a focused backend test on GET /api/drivers/{driver_id}/events to confirm the response shape (id, type=impact, severity, severity_label, lat, lng, gforce, speed, ts, ai_diagnosis dict with severity_assessment/possible_injuries/first_aid_steps/emergency_recommendations/priority_level, alerts_sent boolean). Use admin@crash.io / admin123 to obtain JWT, then call /api/drivers (pick Diego's id) → /api/drivers/{diego_id}/events. Backend runs LIVE mode (DEMO_MODE=false) reading mobile DB crash_database.impact_events. Seed script already executed."
+    message: "Big restructure done and validated visually. Please run a focused backend test on the new behaviours: (1) POST /api/alerts/{id}/acknowledge — confirm response.alert.ack_by_name equals user.name (e.g. 'Monitorista' for monitor@crash.io). Same for /false-alarm. To create a fresh pending impact you can insert directly into Mongo: db['impact_events'].insertOne({id:'test-uuid', user_id:<existing user _id as string>, g_force:5.5, severity:'high', severity_label:'Alto', location:{latitude:19.43,longitude:-99.13}, ai_diagnosis:{severity_assessment:'x', possible_injuries:[], first_aid_steps:[], emergency_recommendations:[], priority_level:'Alto'}, alerts_sent:true, created_at:<now ISO>}). Then poll GET /api/alerts until that id appears as pending and call POST /api/alerts/{id}/acknowledge. (2) GET /api/impacts — exhaustive parameter check: a) no params returns rows with fields {id, driver_id, driver_name, driver_email, severity, severity_label, lat, lng, gforce, status, created_at, ack_by, ack_by_name, ai_diagnosis, alerts_sent}. b) ?status=pending only pending. c) ?severity=critical only critical. d) ?days=3 only last 3 days. e) ?date_from=YYYY-MM-DDTHH:MM:SS+00:00 / ?date_to= honored. f) ?q=Diego matches Diego Salas (case-insensitive on name+email). Use admin@crash.io / admin123 (also works monitor@crash.io / monitor123). Mobile demo + history demo data already seeded (14+ impacts). DEMO_MODE=false so live mobile bridge is used. Do NOT test frontend."
   - agent: "testing"
-    message: "✅ Backend testing completed successfully. All endpoints working as expected. GET /api/drivers/{id}/events returns properly structured impact events with complete ai_diagnosis. GET /api/drivers/{id}/history returns telemetry points. Diego Salas impact event validated with all required fields present and correct types. No critical issues found. Backend implementation is solid and ready for production."
+    message: "✅ BACKEND TESTING COMPLETE. All three test areas passed: (A) POST /api/alerts/{id}/acknowledge and /false-alarm correctly persist ack_by_name with operator's full name (tested with both monitor and admin accounts), (B) GET /api/impacts comprehensive filter testing - all 11 filter combinations work correctly (status, severity, days, date_from/to, q search, combined filters), (C) GET /api/drivers/{id}/events regression check passed. Minor note: Found 1 legacy acknowledged impact with null ack_by_name from before feature implementation - not a bug, just old data. All backend APIs are working correctly. Ready for user validation."

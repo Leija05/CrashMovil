@@ -227,6 +227,7 @@ class MobileBridge:
                 "driver_name": await self._user_name(uid),
                 "type": "impact",
                 "severity": imp.get("severity") or "high",
+                "severity_label": imp.get("severity_label"),
                 "lat": location.get("latitude"),
                 "lng": location.get("longitude"),
                 "gforce": imp.get("g_force"),
@@ -234,8 +235,10 @@ class MobileBridge:
                 "status": status,
                 "created_at": imp.get("created_at"),
                 "ack_by": ack.get("ack_by"),
+                "ack_by_name": ack.get("ack_by_name"),
                 "ack_at": ack.get("ack_at"),
                 "ai_diagnosis": imp.get("ai_diagnosis"),
+                "alerts_sent": imp.get("alerts_sent"),
             }
             new_alerts_map[alert["id"]] = alert
             if (
@@ -332,6 +335,7 @@ class MobileBridge:
                 "impact_id": alert_id,
                 "status": "acknowledged",
                 "ack_by": user["email"],
+                "ack_by_name": user.get("name") or user["email"],
                 "ack_at": now,
                 "updated_at": now,
             }},
@@ -340,6 +344,7 @@ class MobileBridge:
         a = self.alerts[alert_id]
         a["status"] = "acknowledged"
         a["ack_by"] = user["email"]
+        a["ack_by_name"] = user.get("name") or user["email"]
         a["ack_at"] = now
         await self._broadcast({"type": "alert_update", "alert": a})
         return a
@@ -354,6 +359,7 @@ class MobileBridge:
                 "impact_id": alert_id,
                 "status": "false_alarm",
                 "ack_by": user["email"],
+                "ack_by_name": user.get("name") or user["email"],
                 "ack_at": now,
                 "updated_at": now,
             }},
@@ -362,9 +368,97 @@ class MobileBridge:
         a = self.alerts[alert_id]
         a["status"] = "false_alarm"
         a["ack_by"] = user["email"]
+        a["ack_by_name"] = user.get("name") or user["email"]
         a["ack_at"] = now
         await self._broadcast({"type": "alert_update", "alert": a})
         return a
+
+    # ----- query all impacts (for the global /api/impacts endpoint) -----
+    async def query_impacts(
+        self,
+        q: Optional[str] = None,
+        severity: Optional[str] = None,
+        status: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        days: Optional[int] = None,
+        limit: int = 500,
+    ) -> List[dict]:
+        """Return all impacts (joined with monitor_acks + driver info), filtered."""
+        date_query: Dict[str, Any] = {}
+        if days is not None and days > 0 and not date_from and not date_to:
+            date_from = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        if date_from:
+            date_query["$gte"] = date_from
+        if date_to:
+            date_query["$lte"] = date_to
+
+        mongo_q: Dict[str, Any] = {}
+        if date_query:
+            mongo_q["created_at"] = date_query
+        if severity:
+            sev = severity.lower()
+            mongo_q["severity"] = {"$in": [sev, sev.capitalize(), sev.upper()]}
+
+        cursor = self._db.impact_events.find(mongo_q, {"_id": 0}).sort(
+            "created_at", -1
+        ).limit(max(1, min(int(limit), 1000)))
+        impacts = await cursor.to_list(length=limit)
+
+        if not impacts:
+            return []
+
+        ids = [i["id"] for i in impacts]
+        acks = await self._db.monitor_acks.find(
+            {"impact_id": {"$in": ids}}, {"_id": 0}
+        ).to_list(2000)
+        ack_states = {a["impact_id"]: a for a in acks}
+
+        results: List[dict] = []
+        for imp in impacts:
+            ack = ack_states.get(imp["id"], {})
+            st = ack.get("status", "pending")
+            location = imp.get("location") or {}
+            uid = imp["user_id"]
+            driver_name = await self._user_name(uid)
+            driver_email = ""
+            try:
+                obj_id = ObjectId(uid)
+                u = await self._db.users.find_one({"_id": obj_id}, {"email": 1})
+                driver_email = (u or {}).get("email", "") or ""
+            except (InvalidId, TypeError):
+                pass
+
+            row = {
+                "id": imp["id"],
+                "driver_id": uid,
+                "driver_name": driver_name,
+                "driver_email": driver_email,
+                "type": "impact",
+                "severity": imp.get("severity") or "high",
+                "severity_label": imp.get("severity_label"),
+                "lat": location.get("latitude"),
+                "lng": location.get("longitude"),
+                "gforce": imp.get("g_force"),
+                "speed": 0,
+                "status": st,
+                "created_at": imp.get("created_at"),
+                "ack_by": ack.get("ack_by"),
+                "ack_by_name": ack.get("ack_by_name"),
+                "ack_at": ack.get("ack_at"),
+                "ai_diagnosis": imp.get("ai_diagnosis"),
+                "alerts_sent": imp.get("alerts_sent"),
+            }
+            # Status filter
+            if status and status != "all" and row["status"] != status:
+                continue
+            # Name search
+            if q:
+                ql = q.strip().lower()
+                if ql and ql not in driver_name.lower() and ql not in driver_email.lower():
+                    continue
+            results.append(row)
+        return results
 
 
 bridge = MobileBridge()

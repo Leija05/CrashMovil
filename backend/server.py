@@ -186,6 +186,58 @@ async def driver_events(driver_id: str, limit: int = 100, _: dict = Depends(get_
 
 
 # =============================================================================
+# Global impacts query (for the "Historial de choques" modal)
+# =============================================================================
+@api_router.get("/impacts")
+async def list_impacts(
+    q: Optional[str] = None,
+    severity: Optional[str] = None,
+    status: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    days: Optional[int] = None,
+    limit: int = 500,
+    _: dict = Depends(get_current_user),
+):
+    """Returns ALL impact_events (mobile DB) joined with monitor_acks state.
+
+    Query params:
+        q          fuzzy match on driver name or email
+        severity   "high" | "critical" | "medium" | "low" (case-insensitive)
+        status     "pending" | "acknowledged" | "false_alarm" | "all"
+        date_from  ISO timestamp lower bound
+        date_to    ISO timestamp upper bound
+        days       shortcut for "last N days" (overridden by date_from/to)
+        limit      max rows (1..1000, default 500)
+    """
+    if DEMO_MODE:
+        # Reuse the simulator alerts dict (in-memory)
+        rows: list[dict] = []
+        cutoff = None
+        if days and days > 0:
+            cutoff = (datetime.now(timezone.utc) - __import__("datetime").timedelta(days=days)).isoformat()
+        for a in simulator.list_alerts():
+            if cutoff and (a.get("created_at") or "") < cutoff:
+                continue
+            if severity and (a.get("severity") or "").lower() != severity.lower():
+                continue
+            if status and status != "all" and a.get("status") != status:
+                continue
+            if q:
+                ql = q.strip().lower()
+                if ql and ql not in (a.get("driver_name") or "").lower():
+                    continue
+            rows.append(a)
+        return {"impacts": rows[: max(1, min(int(limit), 1000))], "demo": True}
+
+    rows = await bridge.query_impacts(
+        q=q, severity=severity, status=status,
+        date_from=date_from, date_to=date_to, days=days, limit=limit,
+    )
+    return {"impacts": rows, "demo": False}
+
+
+# =============================================================================
 # Alerts
 # =============================================================================
 @api_router.get("/alerts")

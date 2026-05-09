@@ -1,9 +1,9 @@
-import { ShieldAlert, LogOut, Wifi, WifiOff } from "lucide-react";
+import { ShieldAlert, LogOut, Wifi, WifiOff, History } from "lucide-react";
 import { useAuth } from "../auth/AuthContext";
 
 const STATUS_LABEL = { connecting: "Conectando", open: "En vivo", closed: "Reconectando" };
 
-export default function Topbar({ status, alertCount }) {
+export default function Topbar({ status, alertCount, onOpenHistory }) {
   const { user, logout } = useAuth();
 
   return (
@@ -19,6 +19,16 @@ export default function Topbar({ status, alertCount }) {
       </div>
 
       <div className="hidden md:flex items-center gap-3">
+        <button
+          data-testid="open-crash-history"
+          onClick={onOpenHistory}
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:border-emerald-500/40 hover:bg-emerald-500/10 text-[10px] uppercase tracking-[0.25em] text-neutral-300 hover:text-emerald-300 transition-all"
+          title="Historial completo de choques"
+        >
+          <History className="h-3.5 w-3.5" />
+          Historial de choques
+        </button>
+
         <div
           data-testid="ws-status"
           className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[10px] uppercase tracking-[0.25em] ${

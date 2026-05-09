@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, BellOff, Check, Volume2, VolumeX, UserSquare } from "lucide-react";
+import {
+  AlertTriangle,
+  BellOff,
+  Check,
+  Volume2,
+  VolumeX,
+  Gauge,
+  UserCheck,
+  CalendarDays,
+} from "lucide-react";
 import { api, formatApiError } from "../lib/api";
 import { playCriticalAlert, playAck } from "../lib/sound";
 import AlertDiagnosis from "./AlertDiagnosis";
@@ -25,9 +34,37 @@ const STATUS_LABEL = {
   false_alarm: "Falsa Alarma",
 };
 
+const SEVERITY_TONE = {
+  critical: "border-red-500/50 bg-red-500/15 text-red-300",
+  critico: "border-red-500/50 bg-red-500/15 text-red-300",
+  "crítico": "border-red-500/50 bg-red-500/15 text-red-300",
+  high: "border-red-500/40 bg-red-500/10 text-red-300",
+  alto: "border-red-500/40 bg-red-500/10 text-red-300",
+  medium: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  medio: "border-amber-500/40 bg-amber-500/10 text-amber-300",
+  low: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+  bajo: "border-emerald-500/30 bg-emerald-500/10 text-emerald-300",
+};
+
+function severityTone(sev) {
+  if (!sev) return "border-white/10 bg-white/5 text-neutral-300";
+  return SEVERITY_TONE[String(sev).toLowerCase()] || "border-white/10 bg-white/5 text-neutral-300";
+}
+
+const DAY_FILTERS = [
+  { v: 1, l: "1 día" },
+  { v: 3, l: "3 días" },
+  { v: 7, l: "7 días" },
+  { v: 14, l: "14 días" },
+  { v: 30, l: "30 días" },
+];
+
 export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelectDriver, onOpenDriverDetail }) {
   const [tab, setTab] = useState("active"); // active | history
   const [muted, setMuted] = useState(false);
+  const [days, setDays] = useState(7);
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const lastPlayedRef = useRef(null);
 
   // Play sound when a new pending impact arrives (deduped via lastImpactId)
@@ -38,17 +75,61 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
     playCriticalAlert();
   }, [lastImpactId, muted]);
 
-  const { active, history } = useMemo(() => {
-    const a = (alerts || []).filter((x) => x.status === "pending");
-    const h = (alerts || []).filter((x) => x.status !== "pending").slice(0, 25);
-    return { active: a, history: h };
+  const active = useMemo(() => {
+    const list = (alerts || []).filter((x) => x.status === "pending");
+    // newest first
+    return list.sort((a, b) =>
+      (b.created_at || "").localeCompare(a.created_at || ""),
+    );
   }, [alerts]);
+
+  // Load extended history (filterable by days) from /api/impacts
+  const loadHistory = async (d = days) => {
+    setLoadingHistory(true);
+    try {
+      const params = new URLSearchParams();
+      params.set("status", "all");
+      params.set("days", String(d));
+      params.set("limit", "200");
+      const { data } = await api.get(`/impacts?${params.toString()}`);
+      // exclude pending (those live in the active tab) and sort newest first
+      const list = (data.impacts || [])
+        .filter((i) => i.status !== "pending")
+        .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+      setHistory(list);
+    } catch (e) {
+      console.error(formatApiError(e));
+      setHistory([]);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // Refetch history when tab opens or filter changes
+  useEffect(() => {
+    if (tab === "history") loadHistory(days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, days]);
+
+  // Refetch history when an alert is updated via WS (so just-acked ones appear)
+  const lastAlertSig = useMemo(
+    () => (alerts || []).filter((a) => a.status !== "pending").map((a) => `${a.id}:${a.status}`).join(","),
+    [alerts],
+  );
+  useEffect(() => {
+    if (tab === "history") loadHistory(days);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAlertSig]);
 
   const acknowledge = async (id) => {
     try {
       const { data } = await api.post(`/alerts/${id}/acknowledge`);
       setAlerts((prev) => prev.map((a) => (a.id === id ? data.alert : a)));
       playAck();
+      // Auto-jump to history so the operator sees the attended record
+      setTab("history");
+      // give the WS a moment to settle then refresh
+      setTimeout(() => loadHistory(days), 400);
     } catch (e) { console.error(formatApiError(e)); }
   };
 
@@ -56,6 +137,8 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
     try {
       const { data } = await api.post(`/alerts/${id}/false-alarm`);
       setAlerts((prev) => prev.map((a) => (a.id === id ? data.alert : a)));
+      setTab("history");
+      setTimeout(() => loadHistory(days), 400);
     } catch (e) { console.error(formatApiError(e)); }
   };
 
@@ -109,12 +192,41 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
         ))}
       </div>
 
+      {tab === "history" ? (
+        <div className="px-5 py-2.5 border-b border-white/5 flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.2em] text-neutral-500">
+            <CalendarDays className="h-3 w-3" />
+            <span>Últimos</span>
+          </div>
+          <div className="flex gap-1 flex-1 justify-end" data-testid="history-day-filters">
+            {DAY_FILTERS.map((d) => (
+              <button
+                key={d.v}
+                data-testid={`history-days-${d.v}`}
+                onClick={() => setDays(d.v)}
+                className={`text-[10px] uppercase tracking-[0.15em] px-2 py-1 rounded-md border transition-all ${
+                  days === d.v
+                    ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
+                    : "border-white/10 bg-white/[0.03] text-neutral-400 hover:border-white/30 hover:text-white"
+                }`}
+              >
+                {d.l}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       <div className="flex-1 overflow-y-auto p-4 space-y-3">
-        {(tab === "active" ? active : history).length === 0 ? (
+        {tab === "history" && loadingHistory ? (
+          <div className="text-xs text-neutral-500 px-1">Cargando historial...</div>
+        ) : null}
+
+        {(tab === "active" ? active : history).length === 0 && !loadingHistory ? (
           <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-neutral-500">
             <BellOff className="h-8 w-8 mb-3" />
             <span className="text-xs uppercase tracking-[0.3em]">
-              {tab === "active" ? "Todo en orden" : "Sin registros"}
+              {tab === "active" ? "Todo en orden" : "Sin registros en el rango"}
             </span>
           </div>
         ) : (
@@ -127,6 +239,8 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
                 className={`rounded-xl border p-4 transition-all ${
                   isCrit
                     ? "bg-red-500/[0.08] border-red-500/40"
+                    : a.status === "acknowledged"
+                    ? "bg-emerald-500/[0.04] border-emerald-500/20"
                     : "bg-white/[0.03] border-white/10"
                 }`}
               >
@@ -136,6 +250,11 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
                       <span className={`text-[9px] font-semibold uppercase tracking-[0.2em] px-2 py-0.5 rounded border ${STATUS_BADGE[a.status]}`}>
                         {STATUS_LABEL[a.status]}
                       </span>
+                      {a.severity_label || a.severity ? (
+                        <span className={`text-[9px] uppercase tracking-[0.2em] px-1.5 py-0.5 rounded border ${severityTone(a.severity)}`}>
+                          {a.severity_label || a.severity}
+                        </span>
+                      ) : null}
                       <span className="text-[10px] uppercase tracking-[0.2em] text-neutral-500">
                         {a.type === "impact" ? "Impacto detectado" : a.type}
                       </span>
@@ -146,11 +265,22 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
                     >
                       {a.driver_name || a.driver_id}
                     </button>
-                    <div className="font-mono text-[11px] text-neutral-400 mt-1">
-                      {a.gforce?.toFixed(2)}G · {Math.round(a.speed || 0)} km/h ·{" "}
-                      <span className="text-neutral-500">
-                        {a.lat?.toFixed(4)}, {a.lng?.toFixed(4)}
+                    {a.driver_email ? (
+                      <div className="text-[10px] text-neutral-500 font-mono">{a.driver_email}</div>
+                    ) : null}
+                    <div className="font-mono text-[11px] text-neutral-400 mt-1.5 flex items-center gap-3 flex-wrap">
+                      <span className="inline-flex items-center gap-1 text-amber-300">
+                        <Gauge className="h-3 w-3" />
+                        {a.gforce?.toFixed(2)}G
                       </span>
+                      {a.speed ? (
+                        <span>{Math.round(a.speed || 0)} km/h</span>
+                      ) : null}
+                      {a.lat != null ? (
+                        <span className="text-neutral-500">
+                          {a.lat?.toFixed(4)}, {a.lng?.toFixed(4)}
+                        </span>
+                      ) : null}
                     </div>
                   </div>
                   <div className="text-right text-[10px] font-mono text-neutral-500 whitespace-nowrap">
@@ -176,8 +306,22 @@ export default function AlertsCenter({ alerts, setAlerts, lastImpactId, onSelect
                     </button>
                   </div>
                 ) : (
-                  <div className="text-[10px] text-neutral-500 mt-2 font-mono">
-                    {a.ack_by ? `por ${a.ack_by}` : ""} {a.ack_at ? `· ${new Date(a.ack_at).toLocaleTimeString()}` : ""}
+                  <div className="mt-2 rounded-lg border border-emerald-500/20 bg-emerald-500/[0.05] px-3 py-2 text-[11px] flex items-start gap-2">
+                    <UserCheck className="h-3.5 w-3.5 text-emerald-400 flex-shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-emerald-300">
+                        Atendido por{" "}
+                        <span className="font-semibold">{a.ack_by_name || a.ack_by || "—"}</span>
+                      </div>
+                      {a.ack_by && a.ack_by_name ? (
+                        <div className="text-[10px] text-neutral-500 font-mono truncate">{a.ack_by}</div>
+                      ) : null}
+                      {a.ack_at ? (
+                        <div className="text-[10px] text-neutral-500 font-mono">
+                          {new Date(a.ack_at).toLocaleString()}
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 )}
 

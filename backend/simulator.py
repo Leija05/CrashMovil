@@ -208,6 +208,7 @@ class FleetSimulator:
             return None
         a["status"] = "acknowledged"
         a["ack_by"] = user["email"]
+        a["ack_by_name"] = user.get("name") or user["email"]
         a["ack_at"] = datetime.now(timezone.utc).isoformat()
         # bring driver back to active
         d = self.drivers.get(a["driver_id"])
@@ -216,7 +217,8 @@ class FleetSimulator:
             d["gforce"] = 1.0
         if self._db is not None:
             await self._db.alerts.update_one({"id": alert_id}, {"$set": {
-                "status": a["status"], "ack_by": a["ack_by"], "ack_at": a["ack_at"],
+                "status": a["status"], "ack_by": a["ack_by"],
+                "ack_by_name": a["ack_by_name"], "ack_at": a["ack_at"],
             }})
         await self._broadcast({"type": "alert_update", "alert": a})
         return a
@@ -227,6 +229,7 @@ class FleetSimulator:
             return None
         a["status"] = "false_alarm"
         a["ack_by"] = user["email"]
+        a["ack_by_name"] = user.get("name") or user["email"]
         a["ack_at"] = datetime.now(timezone.utc).isoformat()
         d = self.drivers.get(a["driver_id"])
         if d and d["status"] == "critical":
@@ -234,7 +237,8 @@ class FleetSimulator:
             d["gforce"] = 1.0
         if self._db is not None:
             await self._db.alerts.update_one({"id": alert_id}, {"$set": {
-                "status": "false_alarm", "ack_by": a["ack_by"], "ack_at": a["ack_at"],
+                "status": "false_alarm", "ack_by": a["ack_by"],
+                "ack_by_name": a["ack_by_name"], "ack_at": a["ack_at"],
             }})
             await self._db.events.insert_one({
                 "id": f"evt-{uuid.uuid4().hex[:8]}",
